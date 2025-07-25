@@ -1,5 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
+import { getAuth, signOut, onAuthStateChanged } from "firebase/auth";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -22,30 +23,97 @@ import {
   X,
   Building2
 } from "lucide-react";
+import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
+import { db } from "../lib/firebase";
 
-const company = {
-  name: "Mi Empresa S.A.",
-  profileImage: "",
-  isVerified: true,
-  category: "carpintería"
-};
-
-const logout = () => {
-  // Aquí puedes limpiar el localStorage o lo que uses para cerrar sesión
-};
-
-const DashboardLayout = ({ children }: { children: React.ReactNode }) => {
+  const logout = async () => {
+  // Limpiar datos de autenticación del localStorage
+  localStorage.removeItem('userAuthenticated');
+  localStorage.removeItem('userId');
+  localStorage.removeItem('userRole');
+  localStorage.removeItem('companyData');
+  
+  // Cerrar sesión en Firebase
+  const auth = getAuth();
+  try {
+    await signOut(auth);
+    
+    // Forzar una recarga completa de la página para limpiar cualquier estado
+    window.location.href = '/auth';
+  } catch (error) {
+    console.error("Error al cerrar sesión:", error);
+  }
+};const DashboardLayout = ({ children }: { children: React.ReactNode }) => {
   const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [company, setCompany] = useState({
+    name: "Cargando...",
+    profileImage: "",
+    isVerified: false,
+    category: "general"
+  });
 
-  const handleLogout = () => {
-    logout();
-    navigate("/login");
+  // Cargar datos de la empresa actual del usuario autenticado
+  useEffect(() => {
+    const auth = getAuth();
+    
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        try {
+          console.log("Obteniendo datos de empresa para:", user.uid);
+          
+          // Buscar en la colección users primero
+          const userRef = doc(db, "users", user.uid);
+          const userSnap = await getDoc(userRef);
+          
+          if (userSnap.exists()) {
+            const userData = userSnap.data();
+            console.log("Datos de usuario encontrados:", userData);
+            
+            setCompany({
+              name: userData.companyName || userData.nick || "Mi Empresa",
+              profileImage: userData.profileImage || userData.logo || "",
+              isVerified: userData.isVerified || false,
+              category: userData.category || "general"
+            });
+            return;
+          }
+          
+          // Si no se encuentra en users, buscar en empresas
+          const empresaQuery = query(collection(db, "empresas"), where("uid", "==", user.uid));
+          const empresaSnap = await getDocs(empresaQuery);
+          
+          if (!empresaSnap.empty) {
+            const empresaData = empresaSnap.docs[0].data();
+            console.log("Datos de empresa encontrados:", empresaData);
+            
+            setCompany({
+              name: empresaData.companyName || empresaData.nombre || "Mi Empresa",
+              profileImage: empresaData.profileImage || empresaData.logo || "",
+              isVerified: empresaData.isVerified || false,
+              category: empresaData.category || "general"
+            });
+            return;
+          }
+          
+          console.log("No se encontraron datos de empresa");
+        } catch (error) {
+          console.error("Error al cargar datos de empresa:", error);
+        }
+      }
+    });
+    
+    return () => unsubscribe();
+  }, []);
+
+  const handleLogout = async () => {
+    await logout();
+    // No necesitamos navegar aquí porque logout() ya redirige
   };
 
   const navigationItems = [
     { to: "/backoffice", icon: Home, label: "Dashboard", shortLabel: "Inicio", end: true },
-    { to: "/backoffice/quotes", icon: FileText, label: "Solicitudes de Cotización", shortLabel: "Cotizaciones" },
+    // Eliminado: Cotizaciones
     { to: "/backoffice/messages", icon: MessageSquare, label: "Mensajes", shortLabel: "Mensajes" },
     { to: "/backoffice/profile", icon: User, label: "Perfil de Empresa", shortLabel: "Perfil" },
     { to: "/backoffice/reviews", icon: Star, label: "Reseñas y Comentarios", shortLabel: "Reseñas" },

@@ -38,7 +38,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
 import { db } from '../lib/firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, query, collection, where, getDocs } from 'firebase/firestore';
 
 interface Product {
   id: string;
@@ -147,70 +147,147 @@ const CompanyProfile = () => {
       
       try {
         setLoading(true);
-        const companyRef = doc(db, "users", companyId);
-        const companySnap = await getDoc(companyRef);
+        console.log(`Buscando empresa con ID: ${companyId}`);
+        
+        // Primero intentamos buscar en la colección users
+        let companyRef = doc(db, "users", companyId);
+        let companySnap = await getDoc(companyRef);
+        console.log(`Resultado en colección 'users': ${companySnap.exists() ? 'Encontrado' : 'No encontrado'}`);
+        
+        // Si no existe en users, intentamos en empresas
+        if (!companySnap.exists()) {
+          companyRef = doc(db, "empresas", companyId);
+          companySnap = await getDoc(companyRef);
+          console.log(`Resultado en colección 'empresas': ${companySnap.exists() ? 'Encontrado' : 'No encontrado'}`);
+        }
+        
+        // Si no existe en empresas, intentamos en listados
+        if (!companySnap.exists()) {
+          companyRef = doc(db, "listados", companyId);
+          companySnap = await getDoc(companyRef);
+          console.log(`Resultado en colección 'listados': ${companySnap.exists() ? 'Encontrado' : 'No encontrado'}`);
+        }
         
         if (companySnap.exists()) {
-          const data = companySnap.data();
-          
-          // Generar rating y reseñas aleatorios si no existen
-          const rating = data.rating || (Math.random() * 2 + 3).toFixed(1);
-          const reviewCount = data.reviewCount || Math.floor(Math.random() * 200);
-          
-          // Crear los datos de la empresa basado en los datos de Firestore
+          let data = companySnap.data();
+
+          // Si el documento existe pero no tiene información sobre el nombre de la empresa,
+          // intentamos buscar información complementaria en todas las colecciones
+          if (!data.companyName && !data.name && !data.nick && !data.nombreEmpresa) {
+            console.log("Documento encontrado pero sin nombre de empresa, buscando información complementaria...");
+            try {
+              const listadosQuery = query(collection(db, "listados"), where("companyId", "==", companyId));
+              const listadosSnap = await getDocs(listadosQuery);
+              if (!listadosSnap.empty) {
+                const listadoData = listadosSnap.docs[0].data();
+                console.log("Datos complementarios encontrados en listados:", JSON.stringify(listadoData, null, 2));
+                data = { ...data, ...listadoData };
+              } else {
+                console.log("No se encontraron datos complementarios en listados");
+              }
+            } catch (err) {
+              console.error("Error al buscar información complementaria:", err);
+            }
+          }
+
+          // Mostrar todos los campos disponibles para depuración
+          console.log("Datos finales de la empresa:", JSON.stringify(data, null, 2));
+
+          // Construir un nombre para mostrar solo si existe
+          let displayName =
+            data.companyName ||
+            data.name ||
+            data.nick ||
+            data.empresa ||
+            data.nombreEmpresa ||
+            '';
+
+          // --- CONSULTA AVANZADA: contar pedidos reales de este mes ---
+          let monthlyOrders = 0;
+          try {
+            // Buscar solicitudes donde selectedCompanyIds incluya el companyId de la empresa
+            const now = new Date();
+            const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+            const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+
+            // Traer todas las solicitudes del mes (por fecha)
+            const solicitudSnap = await getDocs(collection(db, "solicitud"));
+            monthlyOrders = solicitudSnap.docs.filter(doc => {
+              const d = doc.data();
+              // Fecha real de creación
+              let fecha = null;
+              if (d.createdAt) {
+                // Puede ser string ISO o Timestamp
+                if (typeof d.createdAt === 'string') {
+                  fecha = new Date(d.createdAt);
+                } else if (d.createdAt.seconds) {
+                  fecha = new Date(d.createdAt.seconds * 1000);
+                }
+              }
+              // Verificar si la empresa está en selectedCompanyIds
+              const empresas = d.selectedCompanyIds || [];
+              return fecha && fecha >= firstDay && fecha <= lastDay && empresas.includes(companyId);
+            }).length;
+            console.log("Pedidos reales este mes:", monthlyOrders);
+          } catch (err) {
+            console.error("Error al contar pedidos del mes:", err);
+          }
+
+          // Solo usar datos reales, si no existen mostrar "No disponible" o vacío
           const companyData: CompanyData = {
             id: companyId,
-            name: data.companyName || data.nick || 'Empresa Sin Nombre',
-            logo: data.logo || 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?w=150&h=150&fit=crop',
-            coverImage: data.coverImage || 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?w=800&h=300&fit=crop',
-            rating: parseFloat(rating),
-            reviewCount: reviewCount,
-            deliveryTime: '20-35 min',
-            deliveryFee: 0,
-            location: data.location || 'Argentina',
-            phone: data.phone || '+54 11 4567-8900',
+            name: displayName || 'No disponible',
+            logo: data.logo || data.companyLogo || '',
+            coverImage: data.coverImage || '',
+            rating: data.rating !== undefined ? parseFloat(data.rating) : 0,
+            reviewCount: data.reviewCount !== undefined ? data.reviewCount : 0,
+            deliveryTime: data.deliveryTime || '',
+            deliveryFee: data.deliveryFee !== undefined ? data.deliveryFee : 0,
+            location: data.location || '',
+            phone: data.phone || '',
             email: data.email || '',
             website: data.website || '',
-            description: data.description || 'Sin descripción disponible',
+            description: data.description || '',
             verified: data.verified || false,
-            safetyScore: Math.floor(Math.random() * 30) + 70, // 70-100%
-            totalOrders: Math.floor(Math.random() * 2000) + 500,
-            yearsActive: Math.floor(Math.random() * 20) + 1,
-            responseTime: data.responseTime || '30 min promedio',
-            certifications: data.certifications || ['Certificado de calidad'],
+            safetyScore: data.safetyScore !== undefined ? data.safetyScore : 0,
+            totalOrders: data.totalOrders !== undefined ? data.totalOrders : 0,
+            yearsActive: data.yearsActive !== undefined ? data.yearsActive : 0,
+            responseTime: data.responseTime || '',
+            certifications: data.certifications || [],
             socialProof: {
-              monthlyOrders: Math.floor(Math.random() * 400) + 100,
-              repeatCustomers: Math.floor(Math.random() * 30) + 70,
-              averageRating: parseFloat(rating),
-              onTimeDelivery: Math.floor(Math.random() * 10) + 90
+              monthlyOrders: monthlyOrders,
+              repeatCustomers: data.socialProof?.repeatCustomers !== undefined ? data.socialProof.repeatCustomers : 0,
+              averageRating: data.socialProof?.averageRating !== undefined ? data.socialProof.averageRating : 0,
+              onTimeDelivery: data.socialProof?.onTimeDelivery !== undefined ? data.socialProof.onTimeDelivery : 0
             },
-            workingHours: {
-              monday: '8:00 - 19:00',
-              tuesday: '8:00 - 19:00',
-              wednesday: '8:00 - 19:00',
-              thursday: '8:00 - 19:00',
-              friday: '8:00 - 19:00',
-              saturday: '9:00 - 17:00',
-              sunday: 'Cerrado'
+            workingHours: data.workingHours || {
+              monday: '',
+              tuesday: '',
+              wednesday: '',
+              thursday: '',
+              friday: '',
+              saturday: '',
+              sunday: ''
             },
-            products: [],
-            reviews: [],
-            policies: {
-              returns: 'Aceptamos devoluciones hasta 30 días después de la compra con el empaque original.',
-              warranty: 'Todos nuestros productos cuentan con garantía del fabricante.',
-              delivery: 'Envío gratuito en pedidos superiores a $10000.'
+            products: data.products || [],
+            reviews: data.reviews || [],
+            policies: data.policies || {
+              returns: '',
+              warranty: '',
+              delivery: ''
             },
-            gallery: [],
-            team: []
+            gallery: data.gallery || [],
+            team: data.team || []
           };
-          
+
           setCompany(companyData);
         } else {
-          setError('No se encontró la información de esta empresa');
+          console.error(`No se encontró la empresa con ID: ${companyId}. Se buscó en 'users', 'empresas' y 'listados'.`);
+          setError(`No se encontró la información de esta empresa (ID: ${companyId}). Verifica que el ID sea correcto.`);
         }
       } catch (err) {
         console.error("Error al cargar los datos de la empresa:", err);
-        setError('Error al cargar los datos de la empresa. Intenta nuevamente.');
+        setError(`Error al cargar los datos de la empresa (ID: ${companyId}). Intenta nuevamente.`);
       } finally {
         setLoading(false);
       }
@@ -245,10 +322,10 @@ const CompanyProfile = () => {
           <h2 className="text-2xl font-bold text-gray-900 mb-2">Error</h2>
           <p className="text-gray-600 mb-6">{error || 'No se pudo cargar la información de la empresa'}</p>
           <Button 
-            onClick={() => navigate('/companies')}
+            onClick={() => navigate(-1)} // Regresa a la página anterior
             className="bg-primary-600 hover:bg-primary-700"
           >
-            Volver a empresas
+            Volver atrás
           </Button>
         </div>
         <BottomNavigation />
@@ -667,7 +744,6 @@ const CompanyProfile = () => {
                 </CardHeader>
                 <CardContent>
                   <p className="text-gray-700 mb-4">{company.description}</p>
-                  
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
                       <h4 className="font-semibold mb-3">Horarios de atención</h4>
@@ -682,7 +758,6 @@ const CompanyProfile = () => {
                         ))}
                       </div>
                     </div>
-
                     <div>
                       <h4 className="font-semibold mb-3">Certificaciones</h4>
                       <div className="flex flex-wrap gap-2">
@@ -692,6 +767,76 @@ const CompanyProfile = () => {
                             {cert}
                           </Badge>
                         ))}
+                      </div>
+                    </div>
+                  </div>
+                  {/* Más información relevante de la empresa */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="font-medium">ID de empresa:</span>
+                        <span>{company.id}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Total de pedidos:</span>
+                        <span>{company.totalOrders}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Años de experiencia:</span>
+                        <span>{company.yearsActive}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Puntuación de seguridad:</span>
+                        <span>{company.safetyScore}%</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Pedidos este mes:</span>
+                        <span>{company.socialProof.monthlyOrders}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Clientes que regresan:</span>
+                        <span>{company.socialProof.repeatCustomers}%</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Calificación promedio:</span>
+                        <span>{company.socialProof.averageRating}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Entregas a tiempo:</span>
+                        <span>{company.socialProof.onTimeDelivery}%</span>
+                      </div>
+                    </div>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="font-medium">Teléfono:</span>
+                        <span>{company.phone}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Email:</span>
+                        <span>{company.email}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Sitio web:</span>
+                        {company.website ? (
+                          <a
+                            href={company.website.startsWith('http') ? company.website : `https://${company.website}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 underline hover:text-blue-800"
+                          >
+                            {company.website}
+                          </a>
+                        ) : (
+                          <span>No disponible</span>
+                        )}
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Ubicación:</span>
+                        <span>{company.location}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Tiempo de respuesta:</span>
+                        <span>{company.responseTime}</span>
                       </div>
                     </div>
                   </div>
@@ -815,7 +960,18 @@ const CompanyProfile = () => {
                       <Globe className="w-5 h-5 text-gray-400" />
                       <div>
                         <p className="font-medium">Sitio web</p>
-                        <p className="text-sm text-gray-600">{company.website}</p>
+                        {company.website ? (
+                          <a
+                            href={company.website.startsWith('http') ? company.website : `https://${company.website}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 underline hover:text-blue-800"
+                          >
+                            {company.website}
+                          </a>
+                        ) : (
+                          <p className="text-sm text-gray-600">No disponible</p>
+                        )}
                       </div>
                     </div>
 

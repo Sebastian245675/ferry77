@@ -51,9 +51,6 @@ const Navbar = () => {
               <Link to="/requests" className="text-gray-700 hover:text-blue-600 font-medium transition-colors">
                 Mis Solicitudes
               </Link>
-              <Link to="/quotes" className="text-gray-700 hover:text-blue-600 font-medium transition-colors">
-                Cotizaciones
-              </Link>
               <Link to="/companies" className="text-gray-700 hover:text-blue-600 font-medium transition-colors">
                 Empresas
               </Link>
@@ -126,13 +123,6 @@ const Navbar = () => {
                 onClick={() => setIsMenuOpen(false)}
               >
                 Mis Solicitudes
-              </Link>
-              <Link
-                to="/quotes"
-                className="block px-3 py-2 text-gray-700 hover:text-blue-600 hover:bg-blue-50 rounded-md font-medium"
-                onClick={() => setIsMenuOpen(false)}
-              >
-                Cotizaciones
               </Link>
               <Link
                 to="/companies"

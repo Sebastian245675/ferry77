@@ -1,0 +1,59 @@
+// Este archivo contiene las instrucciones para configurar las reglas de Firebase Storage
+// y resolver el problema CORS
+
+// 1. PROBLEMA CORS
+// El error "blocked by CORS policy" ocurre porque Firebase Storage no permite acceso
+// desde tu dominio de desarrollo (http://192.168.100.6:8080).
+
+// 2. SOLUCIÓN
+// Debes actualizar las reglas de Firebase Storage para permitir lectura pública y 
+// escritura para usuarios autenticados.
+
+// 3. PASOS PARA RESOLVER
+// a) Ve a https://console.firebase.google.com/project/ferry-67757/storage/ferry-67757.appspot.com/rules
+// b) Reemplaza las reglas actuales por las reglas para desarrollo:
+
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      // Durante desarrollo, permite todas las lecturas
+      allow read: if true;
+      
+      // Para escrituras, solo usuarios autenticados
+      allow write: if request.auth != null;
+    }
+  }
+}
+
+// c) Haz clic en "Publicar"
+// d) Espera unos minutos para que los cambios surtan efecto
+
+// 4. REGLAS PARA PRODUCCIÓN
+// Cuando tu app esté lista para producción, usa reglas más restrictivas:
+
+/*
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /company_logos/{userId}/{filename} {
+      // Cualquiera puede ver logos
+      allow read: if true;
+      
+      // Solo el dueño puede subir su propio logo
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    match /{allPaths=**} {
+      // Todo lo demás solo para usuarios autenticados
+      allow read, write: if request.auth != null;
+    }
+  }
+}
+*/
+
+// 5. VERIFICACIÓN
+// Una vez actualizadas las reglas, vuelve a la aplicación y:
+// a) Recarga la página
+// b) Haz clic en "Verificar acceso" en el componente de diagnóstico
+// c) Intenta subir un logo nuevamente

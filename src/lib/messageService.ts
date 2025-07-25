@@ -87,33 +87,18 @@ export class MessageService {
     const user = this.auth.currentUser;
     if (!user) return () => {};
 
-    // Crear un temporizador para verificar los chats de delivery cada 3 segundos
-    const checkDeliveryChats = async () => {
-      try {
-        const allConversations = await this.getConversations();
-        callback(allConversations);
-        console.log("Actualizando conversaciones, total:", allConversations.length);
-      } catch (error) {
-        console.error("Error actualizando conversaciones:", error);
-      }
-    };
-    
-    // Iniciar el temporizador con un intervalo más corto para mejor respuesta
-    const intervalId = setInterval(checkDeliveryChats, 3000);
-    checkDeliveryChats(); // Ejecutar inmediatamente la primera vez
-    
-    // También escuchar cambios en las conversaciones regulares
+    // Solo escuchar cambios en las conversaciones regulares en tiempo real
     const userConversationsRef = ref(this.db, `userConversations/${user.uid}`);
-    
+
     const listener = onValue(userConversationsRef, async (snapshot) => {
       if (!snapshot.exists()) {
         callback([]);
         return;
       }
-      
+
       const conversationIds = Object.keys(snapshot.val());
       const conversations: Conversation[] = [];
-      
+
       for (const convId of conversationIds) {
         const convRef = ref(this.db, `conversations/${convId}`);
         const convSnapshot = await get(convRef);
@@ -124,14 +109,13 @@ export class MessageService {
           });
         }
       }
-      
+
       // Ordenar por actividad más reciente
       callback(conversations.sort((a, b) => b.lastActivity - a.lastActivity));
     });
-    
+
     // Retorna función para detener la escucha
     return () => {
-      clearInterval(intervalId);
       off(userConversationsRef);
     };
   }

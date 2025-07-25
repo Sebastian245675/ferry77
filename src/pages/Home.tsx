@@ -1,11 +1,106 @@
-
-import React from 'react';
-import { Link } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { Package, Users, Truck, Star, Shield, CheckCircle, ArrowRight, Play } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { collection, getDocs, query, where } from 'firebase/firestore';
+import { db } from '../lib/firebase';
+import { getAuth, onAuthStateChanged } from "firebase/auth";
 
 const Home = () => {
+  const [activeRequestsCount, setActiveRequestsCount] = useState(0);
+  const navigate = useNavigate();
+  const auth = getAuth();
+
+  // Verificar si el usuario está autenticado y redirigir automáticamente
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        // Usuario autenticado, verificar si es empresa o usuario normal
+        const uid = user.uid;
+        
+        // Verificar en Firestore si es empresa
+        const checkUserType = async () => {
+          try {
+            // Primero buscar en users donde rol sea empresa
+            const userRef = query(collection(db, "users"), where("uid", "==", uid));
+            const userSnap = await getDocs(userRef);
+            
+            if (!userSnap.empty && userSnap.docs[0].data().rol === "empresa") {
+              // Es una empresa, redirigir al dashboard de empresa
+              console.log("Usuario autenticado como empresa (users), redirigiendo al backoffice");
+              
+              // Forzar recarga para asegurar datos actuales
+              window.location.href = '/backoffice';
+              return;
+            }
+            
+            // Si no se encuentra en users, buscar en empresas
+            const empresaRef = query(collection(db, "empresas"), where("uid", "==", uid));
+            const empresaSnap = await getDocs(empresaRef);
+            
+            // También buscar en empresa (singular)
+            const empresaSingularRef = query(collection(db, "empresa"), where("uid", "==", uid));
+            const empresaSingularSnap = await getDocs(empresaSingularRef);
+            
+            if (!empresaSnap.empty || !empresaSingularSnap.empty) {
+              // Es una empresa, redirigir al dashboard de empresa
+              console.log("Usuario autenticado como empresa, redirigiendo al backoffice");
+              
+              // Forzar recarga para asegurar datos actuales
+              window.location.href = '/backoffice';
+            } else {
+              // Es un usuario normal, redirigir al dashboard de usuario
+              console.log("Usuario autenticado como cliente, redirigiendo al dashboard");
+              
+              // Forzar recarga para asegurar datos actuales
+              window.location.href = '/dashboard';
+            }
+          } catch (error) {
+            console.error("Error al verificar tipo de usuario:", error);
+            // Por defecto, redirigir al dashboard principal
+            navigate('/dashboard');
+          }
+        };
+        
+        checkUserType();
+      }
+    });
+    
+    // Limpiar el listener cuando el componente se desmonte
+    return () => unsubscribe();
+  }, [navigate]);
+
+  useEffect(() => {
+    const fetchActiveRequests = async () => {
+      try {
+        console.log("Configurando solicitudes activas...");
+        
+        // En desarrollo usaremos un valor fijo de 3 para asegurar que se muestre algo
+        // En producción haremos la consulta normal
+        if (process.env.NODE_ENV === 'development') {
+          console.log("Modo desarrollo: Mostrando 3 solicitudes activas");
+          setActiveRequestsCount(3);
+          return;
+        }
+        
+        // Esta consulta es para producción
+        const q = query(collection(db, "solicitud"), where("status", "==", "cotizando"));
+        const activasSnapshot = await getDocs(q);
+        const cantidadActivas = activasSnapshot.size;
+        
+        console.log("Solicitudes activas encontradas:", cantidadActivas);
+        setActiveRequestsCount(cantidadActivas);
+      } catch (error) {
+        console.error("Error al cargar solicitudes activas:", error);
+        // En caso de error en desarrollo mostrar 2, en producción 0
+        setActiveRequestsCount(process.env.NODE_ENV === 'development' ? 2 : 0);
+      }
+    };
+
+    fetchActiveRequests();
+  }, []);
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
       {/* Header */}
@@ -45,11 +140,24 @@ const Home = () => {
               <span className="text-blue-600"> profesionales</span> con
               <span className="text-purple-600"> proveedores</span>
             </h1>
-            <p className="text-xl text-gray-600 mb-8 max-w-3xl mx-auto">
+            <p className="text-xl text-gray-600 mb-4 max-w-3xl mx-auto">
               Solicita herramientas y materiales, recibe cotizaciones en tiempo real y elige la mejor opción. Todo en una sola app.
             </p>
+
+            <div className="mb-8 flex justify-center">
+              <div className="bg-blue-100 text-blue-800 rounded-full px-5 py-2 font-semibold text-lg flex items-center">
+                <Package className="w-5 h-5 mr-2" />
+                Solicitudes activas: <span className="ml-2 text-2xl font-bold">{activeRequestsCount}</span>
+              </div>
+            </div>
             
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
+              <Link to="/formulario-supremo">
+                <Button size="lg" className="bg-purple-600 hover:bg-purple-700 text-lg px-8 py-4">
+                  <Package className="w-5 h-5 mr-2" />
+                  Formulario Supremo
+                </Button>
+              </Link>
               <Link to="/demo">
                 <Button size="lg" className="bg-blue-600 hover:bg-blue-700 text-lg px-8 py-4">
                   <Play className="w-5 h-5 mr-2" />
@@ -155,6 +263,63 @@ const Home = () => {
         </div>
       </section>
 
+      {/* Formulario Supremo Section */}
+      <section className="py-20 bg-gradient-to-r from-purple-500 to-pink-500">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex flex-col lg:flex-row items-center gap-8">
+            <div className="flex-1">
+              <h2 className="text-3xl font-bold text-white mb-4">
+                ¡Nuevo! Formulario Supremo
+              </h2>
+              <p className="text-xl text-white/90 mb-6">
+                Sube absolutamente todos los artículos uno por uno con todos sus detalles: nombre, especificaciones, fotos y más.
+              </p>
+              <ul className="space-y-3 mb-6">
+                <li className="flex items-center text-white">
+                  <CheckCircle className="w-5 h-5 mr-2 text-white" />
+                  Sube fotos directamente desde Google
+                </li>
+                <li className="flex items-center text-white">
+                  <CheckCircle className="w-5 h-5 mr-2 text-white" />
+                  Agrega especificaciones detalladas de cada artículo
+                </li>
+                <li className="flex items-center text-white">
+                  <CheckCircle className="w-5 h-5 mr-2 text-white" />
+                  Organiza tu catálogo completo de productos
+                </li>
+              </ul>
+              <Link to="/formulario-supremo">
+                <Button size="lg" className="bg-white text-purple-600 hover:bg-purple-50 text-lg px-8 py-4">
+                  Acceder al Formulario Supremo
+                  <ArrowRight className="w-5 h-5 ml-2" />
+                </Button>
+              </Link>
+            </div>
+            <div className="flex-1 mt-8 lg:mt-0">
+              <div className="bg-white rounded-xl shadow-2xl p-6 transform rotate-2">
+                <div className="flex items-center mb-4">
+                  <div className="w-3 h-3 bg-red-500 rounded-full mr-2"></div>
+                  <div className="w-3 h-3 bg-yellow-500 rounded-full mr-2"></div>
+                  <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                </div>
+                <div className="space-y-3">
+                  <div className="h-10 bg-purple-100 rounded w-full"></div>
+                  <div className="flex space-x-3">
+                    <div className="h-24 w-24 bg-gray-200 rounded-lg"></div>
+                    <div className="flex-1 space-y-2">
+                      <div className="h-6 bg-gray-200 rounded w-3/4"></div>
+                      <div className="h-4 bg-gray-200 rounded w-1/2"></div>
+                      <div className="h-4 bg-gray-200 rounded w-2/3"></div>
+                    </div>
+                  </div>
+                  <div className="h-10 bg-purple-200 rounded w-1/3 ml-auto"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* CTA Section */}
       <section className="py-20 bg-gradient-to-r from-blue-600 to-purple-600">
         <div className="max-w-4xl mx-auto text-center px-4 sm:px-6 lg:px-8">
@@ -166,8 +331,14 @@ const Home = () => {
           </p>
           
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
+            <Link to="/formulario-supremo">
+              <Button size="lg" className="bg-white text-purple-600 hover:bg-purple-50 border-white text-lg px-8 py-4">
+                <Package className="w-5 h-5 mr-2" />
+                Formulario Supremo
+              </Button>
+            </Link>
             <Link to="/demo">
-              <Button size="lg" variant="outline" className="bg-white text-blue-600 hover:bg-blue-50 text-lg px-8 py-4">
+              <Button size="lg" variant="outline" className="bg-white/10 border-white text-white hover:bg-white/20 text-lg px-8 py-4">
                 <Play className="w-5 h-5 mr-2" />
                 Ver Demo Interactivo
               </Button>

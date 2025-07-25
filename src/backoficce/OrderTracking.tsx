@@ -53,28 +53,57 @@ const OrderTracking = () => {
   useEffect(() => {
     const fetchOrderDetails = async () => {
       if (!orderId) {
-        navigate("/company-panel");
+        console.log("No se proporcionó ID de pedido");
+        navigate("/backoffice");
         return;
       }
 
       try {
         setLoading(true);
-        const orderDoc = await getDoc(doc(db, "cotizaciones", orderId));
+        console.log("Buscando pedido con ID:", orderId);
+        
+        // Intentar buscar en cotizaciones primero
+        let orderDoc = await getDoc(doc(db, "cotizaciones", orderId));
+        
+        // Si no existe en cotizaciones, buscar en solicitud
+        if (!orderDoc.exists()) {
+          console.log("Pedido no encontrado en 'cotizaciones', buscando en 'solicitud'");
+          orderDoc = await getDoc(doc(db, "solicitud", orderId));
+        }
         
         if (orderDoc.exists()) {
           const orderData = { 
             id: orderDoc.id, 
             ...orderDoc.data() 
           } as any;
+          console.log("Pedido encontrado:", orderData);
+          
+          // Asegurarse de que el precio y otros campos críticos estén definidos correctamente
+          if (orderData.autoQuotes && orderData.autoQuotes.length > 0) {
+            console.log("Detalle de autoQuotes:", JSON.stringify(orderData.autoQuotes, null, 2));
+            // Extraer información relevante de autoQuotes
+            if (orderData.autoQuotes[0].bestPrice && !orderData.productPrice) {
+              console.log(`Estableciendo productPrice desde autoQuotes: ${orderData.autoQuotes[0].bestPrice}`);
+              orderData.productPrice = orderData.autoQuotes[0].bestPrice;
+            }
+            if (orderData.autoQuotes[0].bestProduct && !orderData.productDetails) {
+              orderData.productDetails = orderData.autoQuotes[0].bestProduct;
+            }
+          }
+          
+          // Depuración completa de la estructura del pedido
+          console.log("Estructura completa del pedido:", JSON.stringify(orderData, null, 2));
+          
           setOrderDetails(orderData);
           setCurrentStatus(orderData.deliveryStatus || "pendiente");
         } else {
+          console.error("Pedido no encontrado en ninguna colección:", orderId);
           toast({
             title: "Error",
-            description: "No se encontró el pedido",
+            description: "No se encontró el pedido en ninguna colección",
             variant: "destructive",
           });
-          navigate("/company-panel");
+          navigate("/backoffice");
         }
       } catch (error) {
         console.error("Error al cargar detalles del pedido:", error);
@@ -83,6 +112,8 @@ const OrderTracking = () => {
           description: "Error al cargar detalles del pedido",
           variant: "destructive",
         });
+        // Navegar a la ruta correcta en caso de error
+        navigate("/backoffice");
       } finally {
         setLoading(false);
       }
@@ -97,39 +128,84 @@ const OrderTracking = () => {
     try {
       setUpdating(true);
       
-      // Actualizar el estado en Firestore
-      await updateDoc(doc(db, "cotizaciones", orderId), {
-        deliveryStatus: currentStatus,
-        statusNote: statusNote,
-        statusUpdatedAt: new Date(),
-      });
-
-      // Si el estado es "entregado", también debemos actualizar la solicitud asociada
-      if (currentStatus === "entregado" && orderDetails?.requestId) {
-        await updateDoc(doc(db, "solicitud", orderDetails.requestId), {
-          status: "completado"
-        });
+      // Intentar determinar la colección correcta
+      let collections = ["solicitud", "cotizaciones"];
+      let updateSuccess = false;
+      let updateError = null;
+      
+      console.log("Orden actual:", orderDetails);
+      console.log("Intentando actualizar el estado a:", currentStatus);
+      
+      // Intentar actualizar en ambas colecciones si es necesario
+      for (const collection of collections) {
+        try {
+          console.log(`Intentando actualizar en colección '${collection}' con ID: ${orderId}`);
+          
+          // Verificar si el documento existe antes de actualizarlo
+          const docRef = doc(db, collection, orderId);
+          const docSnap = await getDoc(docRef);
+          
+          if (docSnap.exists()) {
+            console.log(`Documento encontrado en '${collection}', procediendo con la actualización`);
+            
+            // Actualizar el estado en Firestore
+            await updateDoc(docRef, {
+              deliveryStatus: currentStatus,
+              statusNote: statusNote,
+              statusUpdatedAt: new Date(),
+            });
+            
+            console.log(`Actualización exitosa en '${collection}'`);
+            updateSuccess = true;
+            
+            // Si el estado es "entregado", actualizar también el estado general
+            if (currentStatus === "entregado") {
+              try {
+                await updateDoc(docRef, {
+                  status: "completado"
+                });
+                console.log("Estado general actualizado a 'completado'");
+              } catch (innerError) {
+                console.warn("No se pudo actualizar el estado general:", innerError);
+              }
+            }
+            
+            break; // Salir del bucle si la actualización fue exitosa
+          } else {
+            console.log(`El documento no existe en la colección '${collection}'`);
+          }
+        } catch (collectionError) {
+          console.error(`Error al actualizar en '${collection}':`, collectionError);
+          updateError = collectionError;
+        }
       }
-
-      toast({
-        title: "Estado actualizado",
-        description: "El estado del pedido ha sido actualizado correctamente",
-      });
       
-      // Actualizar los detalles locales
-      setOrderDetails({
-        ...orderDetails,
-        deliveryStatus: currentStatus,
-        statusNote: statusNote,
-        statusUpdatedAt: new Date(),
-      });
-      
-      setStatusNote("");
+      // Verificar si la actualización fue exitosa en alguna colección
+      if (updateSuccess) {
+        console.log("Actualización completada con éxito");
+        toast({
+          title: "Estado actualizado",
+          description: "El estado del pedido ha sido actualizado correctamente",
+        });
+        
+        // Actualizar los detalles locales
+        setOrderDetails({
+          ...orderDetails,
+          deliveryStatus: currentStatus,
+          statusNote: statusNote,
+          statusUpdatedAt: new Date(),
+        });
+        
+        setStatusNote("");
+      } else {
+        // Si la actualización falló en todas las colecciones
+        throw updateError || new Error("No se pudo actualizar el pedido en ninguna colección");
+      }
     } catch (error) {
       console.error("Error al actualizar el estado:", error);
       toast({
         title: "Error",
-        description: "No se pudo actualizar el estado del pedido",
+        description: "No se pudo actualizar el estado del pedido. Detalles: " + (error.message || "Error desconocido"),
         variant: "destructive",
       });
     } finally {
@@ -169,6 +245,26 @@ const OrderTracking = () => {
     }
   };
 
+  // Agregar un tiempo de espera máximo para la carga
+  useEffect(() => {
+    if (loading) {
+      const timeout = setTimeout(() => {
+        if (loading) {
+          setLoading(false);
+          console.error("Tiempo de espera excedido al cargar los datos del pedido");
+          toast({
+            title: "Error",
+            description: "Tiempo de espera excedido al cargar datos. Inténtalo de nuevo.",
+            variant: "destructive",
+          });
+          navigate("/backoffice");
+        }
+      }, 10000); // 10 segundos máximo de espera
+      
+      return () => clearTimeout(timeout);
+    }
+  }, [loading, navigate]);
+
   if (loading) {
     return (
       <DashboardLayout>
@@ -191,7 +287,7 @@ const OrderTracking = () => {
             <Button
               variant="outline"
               size="icon"
-              onClick={() => navigate("/company-panel")}
+              onClick={() => navigate("/backoffice")}
               className="mr-4"
             >
               <ArrowLeft className="h-4 w-4" />
@@ -243,27 +339,64 @@ const OrderTracking = () => {
                       <p className="text-sm font-medium text-gray-500">Fecha de Aceptación</p>
                       <p>
                         {orderDetails?.acceptedAt
-                          ? new Date(orderDetails.acceptedAt.seconds * 1000).toLocaleDateString()
-                          : "No disponible"}
+                          ? (orderDetails.acceptedAt.seconds 
+                             ? new Date(orderDetails.acceptedAt.seconds * 1000).toLocaleDateString()
+                             : new Date(orderDetails.acceptedAt).toLocaleDateString())
+                          : orderDetails?.createdAt
+                            ? new Date(orderDetails.createdAt).toLocaleDateString()
+                            : "No disponible"}
                       </p>
                     </div>
                     <div className="space-y-2">
                       <p className="text-sm font-medium text-gray-500">Producto/Servicio</p>
-                      <p className="font-medium">{orderDetails?.requestTitle || "No especificado"}</p>
+                      <p className="font-medium">
+                        {orderDetails?.productName || 
+                         orderDetails?.items?.[0]?.name ||
+                         orderDetails?.title || 
+                         orderDetails?.requestTitle || 
+                         "No especificado"}
+                      </p>
                     </div>
                     <div className="space-y-2">
                       <p className="text-sm font-medium text-gray-500">Cantidad</p>
-                      <p>{orderDetails?.quantity || "No especificado"}</p>
+                      <p>{orderDetails?.items?.[0]?.quantity || orderDetails?.quantity || "No especificado"}</p>
                     </div>
                     <div className="space-y-2">
-                      <p className="text-sm font-medium text-gray-500">Tiempo de Entrega</p>
-                      <p>{orderDetails?.deliveryTime || "No especificado"}</p>
+                      <p className="text-sm font-medium text-gray-500">Categoría</p>
+                      <p>{orderDetails?.profession || 
+                          orderDetails?.productDetails?.category ||
+                          orderDetails?.autoQuotes?.[0]?.bestProduct?.category ||
+                          "No especificado"}</p>
                     </div>
                     <div className="space-y-2 flex items-center">
                       <div>
                         <p className="text-sm font-medium text-gray-500">Monto Total</p>
                         <p className="text-xl font-bold text-green-700">
-                          ${orderDetails?.totalAmount?.toLocaleString() || "0"}
+                          ${(() => {
+                            // Consola para depuración
+                            console.log("Datos de precio:", {
+                              productPrice: orderDetails?.productPrice,
+                              bestPrice: orderDetails?.bestPrice,
+                              productDetailsPrice: orderDetails?.productDetails?.price,
+                              price: orderDetails?.price,
+                              autoQuotes: orderDetails?.autoQuotes?.[0]?.bestPrice,
+                              bestProductPrice: orderDetails?.bestProduct?.price
+                            });
+                            
+                            // Revisar en todos los posibles lugares donde podría estar el precio
+                            const price = 
+                              orderDetails?.productPrice !== undefined ? Number(orderDetails.productPrice) :
+                              orderDetails?.bestPrice !== undefined ? Number(orderDetails.bestPrice) :
+                              orderDetails?.autoQuotes?.[0]?.bestPrice !== undefined ? Number(orderDetails.autoQuotes[0].bestPrice) :
+                              orderDetails?.bestProduct?.price !== undefined ? Number(orderDetails.bestProduct.price) :
+                              orderDetails?.productDetails?.price !== undefined ? Number(orderDetails.productDetails.price) :
+                              orderDetails?.items?.[0]?.bestPrice !== undefined ? Number(orderDetails.items[0].bestPrice) :
+                              orderDetails?.price !== undefined ? Number(orderDetails.price) :
+                              orderDetails?.totalAmount !== undefined ? Number(orderDetails.totalAmount) :
+                              0;
+                              
+                            return price.toLocaleString();
+                          })()}
                         </p>
                       </div>
                     </div>
@@ -376,7 +509,7 @@ const OrderTracking = () => {
                 <div className="space-y-4">
                   <div className="space-y-2">
                     <p className="text-sm font-medium text-gray-500">Cliente</p>
-                    <p className="font-medium">{orderDetails?.clientName || orderDetails?.userName || "Cliente"}</p>
+                    <p className="font-medium">{orderDetails?.clientName || orderDetails?.userName || orderDetails?.userEmail?.split('@')[0] || "Cliente"}</p>
                   </div>
 
                   {orderDetails?.contactInfo && (
@@ -414,7 +547,7 @@ const OrderTracking = () => {
                   onClick={() => navigate(`/messages?clientId=${orderDetails?.userId}`)}
                 >
                   <MessageSquare className="h-4 w-4 mr-2" />
-                  Contactar Client
+                  Contactar Cliente
                 </Button>
               </CardFooter>
             </Card>
@@ -428,7 +561,20 @@ const OrderTracking = () => {
                 <div className="space-y-4">
                   <div className="flex justify-between">
                     <span className="text-sm text-gray-500">Subtotal:</span>
-                    <span>${(orderDetails?.totalAmount || 0).toLocaleString()}</span>
+                    <span>${(() => {
+                      const price = 
+                        orderDetails?.productPrice !== undefined ? Number(orderDetails.productPrice) :
+                        orderDetails?.bestPrice !== undefined ? Number(orderDetails.bestPrice) :
+                        orderDetails?.autoQuotes?.[0]?.bestPrice !== undefined ? Number(orderDetails.autoQuotes[0].bestPrice) :
+                        orderDetails?.bestProduct?.price !== undefined ? Number(orderDetails.bestProduct.price) :
+                        orderDetails?.productDetails?.price !== undefined ? Number(orderDetails.productDetails.price) :
+                        orderDetails?.items?.[0]?.bestPrice !== undefined ? Number(orderDetails.items[0].bestPrice) :
+                        orderDetails?.price !== undefined ? Number(orderDetails.price) :
+                        orderDetails?.totalAmount !== undefined ? Number(orderDetails.totalAmount) :
+                        0;
+                        
+                      return price.toLocaleString();
+                    })()}</span>
                   </div>
                   {orderDetails?.taxes && (
                     <div className="flex justify-between">
@@ -446,9 +592,22 @@ const OrderTracking = () => {
                     <div className="flex justify-between font-bold">
                       <span>Total:</span>
                       <span className="text-green-700">
-                        ${((orderDetails?.totalAmount || 0) + 
-                           (orderDetails?.taxes || 0) + 
-                           (orderDetails?.shippingCost || 0)).toLocaleString()}
+                        ${(() => {
+                          const price = 
+                            orderDetails?.productPrice !== undefined ? Number(orderDetails.productPrice) :
+                            orderDetails?.bestPrice !== undefined ? Number(orderDetails.bestPrice) :
+                            orderDetails?.autoQuotes?.[0]?.bestPrice !== undefined ? Number(orderDetails.autoQuotes[0].bestPrice) :
+                            orderDetails?.bestProduct?.price !== undefined ? Number(orderDetails.bestProduct.price) :
+                            orderDetails?.productDetails?.price !== undefined ? Number(orderDetails.productDetails.price) :
+                            orderDetails?.items?.[0]?.bestPrice !== undefined ? Number(orderDetails.items[0].bestPrice) :
+                            orderDetails?.price !== undefined ? Number(orderDetails.price) :
+                            orderDetails?.totalAmount !== undefined ? Number(orderDetails.totalAmount) :
+                            0;
+                          
+                          const quantity = orderDetails?.items?.[0]?.quantity || orderDetails?.quantity || 1;
+                          const total = price * quantity + (orderDetails?.taxes || 0) + (orderDetails?.shippingCost || 0);
+                          return total.toLocaleString();
+                        })()}
                       </span>
                     </div>
                   </div>

@@ -27,7 +27,7 @@ const CompanyCard: React.FC<CompanyCardProps> = ({ company, onSelect }) => {
     if (onSelect) {
       onSelect(company);
     }
-    navigate(`/company-profile?id=${company.id}`);
+    navigate(`/company/${company.id}`);
   };
 
   return (

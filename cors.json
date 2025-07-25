@@ -1,0 +1,8 @@
+[
+  {
+    "origin": ["http://localhost:8080", "http://127.0.0.1:8080", "http://localhost:5173", "http://localhost:3000", "https://ferry-67757.web.app", "https://ferry-67757.firebaseapp.com"],
+    "method": ["GET", "HEAD", "DELETE", "PUT", "POST"],
+    "maxAgeSeconds": 3600,
+    "responseHeader": ["Content-Type", "Content-Length", "Content-Encoding", "Authorization", "User-Agent", "x-goog-*"]
+  }
+]

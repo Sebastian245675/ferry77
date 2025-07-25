@@ -1,0 +1,45 @@
+// Reglas de Firebase Storage para desarrollo
+// Copia y pega estas reglas en la consola de Firebase:
+// 1. Ve a https://console.firebase.google.com/
+// 2. Selecciona tu proyecto "ferry-67757"
+// 3. Ve a Storage en el menú lateral
+// 4. Haz clic en la pestaña "Reglas"
+// 5. Reemplaza las reglas actuales por estas:
+
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      // Durante el desarrollo, permite todas las lecturas
+      allow read: if true;
+      
+      // Para escrituras, solo usuarios autenticados pueden subir archivos
+      allow write: if request.auth != null;
+      
+      // Si necesitas permisos más específicos, usa esto:
+      // match /company_logos/{userId}/{filename} {
+      //   allow read: if true;
+      //   allow write: if request.auth != null && request.auth.uid == userId;
+      // }
+    }
+  }
+}
+
+// NOTA IMPORTANTE: Estas reglas son para DESARROLLO.
+// Para producción, usa reglas más restrictivas como:
+
+/*
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /company_logos/{userId}/{filename} {
+      allow read: if true;  // Cualquiera puede ver logos
+      allow write: if request.auth != null && request.auth.uid == userId;  // Solo el dueño puede subir
+    }
+    
+    match /{allPaths=**} {
+      allow read, write: if request.auth != null;  // Todo lo demás solo para autenticados
+    }
+  }
+}
+*/

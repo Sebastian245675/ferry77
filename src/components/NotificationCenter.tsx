@@ -120,9 +120,7 @@ const NotificationCenter = () => {
     // Navegar según el tipo de acción
     if (notification.action && notification.actionParams) {
       switch (notification.action) {
-        case 'view_quote':
-          navigate(`/quotes?quoteId=${notification.actionParams.quoteId}`);
-          break;
+        // Eliminado: navegación a cotizaciones
         case 'view_message':
           navigate(`/messages?chatId=${notification.actionParams.chatId}`);
           break;
@@ -141,9 +139,7 @@ const NotificationCenter = () => {
     } else if (notification.type) {
       // Navegación basada solo en tipo si no hay acción específica
       switch (notification.type) {
-        case 'quote':
-          navigate('/quotes');
-          break;
+        // Eliminado: navegación a cotizaciones
         case 'message':
           navigate('/messages');
           break;

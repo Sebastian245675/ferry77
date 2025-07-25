@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import { getAuth, signOut, updateProfile } from "firebase/auth";
-import { doc, setDoc, getDoc, updateDoc } from "firebase/firestore";
+import { doc, setDoc, getDoc, updateDoc, collection, query, where, getDocs } from "firebase/firestore";
 import { db } from "../lib/firebase";
 
 const Settings = () => {
@@ -27,6 +27,34 @@ const Settings = () => {
     email: '',
     phone: '',
     location: ''
+  });
+  const [language, setLanguage] = useState('es');
+
+  // Guardar idioma automáticamente al cambiar
+  useEffect(() => {
+    if (!user) return;
+    const saveLanguage = async () => {
+      try {
+        const userSettingsRef = doc(db, "userSettings", user.uid);
+        await updateDoc(userSettingsRef, {
+          language,
+          updatedAt: new Date()
+        });
+        toast({
+          title: language === 'es' ? 'Idioma cambiado a Español' : 'Language changed to English',
+          description: language === 'es' ? 'La preferencia de idioma se ha guardado.' : 'Language preference saved.',
+        });
+      } catch (error) {
+        console.error("Error al guardar el idioma:", error);
+      }
+    };
+    saveLanguage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [language]);
+  const [accountInfo, setAccountInfo] = useState({
+    createdAt: '',
+    pedidos: 0,
+    puntos: 0,
   });
   const { toast } = useToast();
   const auth = getAuth();
@@ -55,23 +83,23 @@ const Settings = () => {
 
         if (settingsSnap.exists()) {
           const data = settingsSnap.data();
-          
           // Cargar tema
           if (data.darkMode !== undefined) {
             setDarkMode(data.darkMode);
             document.documentElement.classList.toggle('dark', data.darkMode);
           }
-          
           // Cargar notificaciones
           if (data.notifications) {
             setNotifications(data.notifications);
           }
-          
+          // Cargar idioma
+          if (data.language) {
+            setLanguage(data.language);
+          }
           // Cargar información adicional del perfil
           if (data.location) {
             setProfile(prev => ({ ...prev, location: data.location }));
           }
-          
           if (data.phone) {
             setProfile(prev => ({ ...prev, phone: data.phone }));
           }
@@ -85,9 +113,41 @@ const Settings = () => {
               sms: false,
               marketing: false
             },
+            language: 'es',
             createdAt: new Date()
           });
         }
+
+        // Cargar información real de la cuenta desde la colección solicitud
+        const solicitudRef = collection(db, "solicitud");
+        const qSolicitudes = query(solicitudRef, where("userId", "==", user.uid));
+        const solicitudesSnap = await getDocs(qSolicitudes);
+        let pedidos = 0;
+        let primerPedido = null;
+        solicitudesSnap.forEach(doc => {
+          pedidos++;
+          const data = doc.data();
+          if (data.createdAt) {
+            const fecha = new Date(data.createdAt.seconds ? data.createdAt.seconds * 1000 : data.createdAt);
+            if (!primerPedido || fecha < primerPedido) {
+              primerPedido = fecha;
+            }
+          }
+        });
+        // Cargar puntos desde users (si existe)
+        let puntos = 0;
+        const usersRef = collection(db, "users");
+        const qUser = query(usersRef, where("uid", "==", user.uid));
+        const userSnap = await getDocs(qUser);
+        if (!userSnap.empty) {
+          const userData = userSnap.docs[0].data();
+          puntos = userData.puntos || 0;
+        }
+        setAccountInfo({
+          createdAt: primerPedido ? primerPedido.toLocaleDateString() : '-',
+          pedidos,
+          puntos,
+        });
       } catch (error) {
         console.error("Error al cargar configuraciones:", error);
         toast({
@@ -99,7 +159,6 @@ const Settings = () => {
         setLoading(false);
       }
     };
-
     loadUserSettings();
   }, [user, navigate, toast]);
 
@@ -117,6 +176,7 @@ const Settings = () => {
       await updateDoc(userSettingsRef, {
         location: profile.location,
         phone: profile.phone,
+        language: language,
         updatedAt: new Date()
       });
 
@@ -136,12 +196,20 @@ const Settings = () => {
 
   const handleLogout = async () => {
     try {
+      // Limpiar datos de autenticación del localStorage
+      localStorage.removeItem('userAuthenticated');
+      localStorage.removeItem('userId');
+      localStorage.removeItem('userRole');
+      localStorage.removeItem('companyData');
+      
       await signOut(auth);
       toast({
         title: "Sesión cerrada",
         description: "Has cerrado sesión exitosamente",
       });
-      navigate('/');
+      
+      // Forzar recarga para limpiar completamente el estado
+      window.location.href = '/auth';
     } catch (error) {
       console.error("Error al cerrar sesión:", error);
       toast({
@@ -239,6 +307,51 @@ const Settings = () => {
     }
   ];
 
+  // Handler para navegación rápida
+  const handleQuickAccess = (action) => {
+    switch (action) {
+      case 'profile':
+        navigate('/profile');
+        break;
+      case 'password':
+        navigate('/auth'); // O ruta de cambio de contraseña si existe
+        break;
+      case 'verification':
+        navigate('/backoffice/verification');
+        break;
+      case 'notifications':
+        // Scroll a la sección de notificaciones
+        document.getElementById('settings-notifications')?.scrollIntoView({ behavior: 'smooth' });
+        break;
+      case 'email':
+        document.getElementById('settings-notifications')?.scrollIntoView({ behavior: 'smooth' });
+        break;
+      case 'alerts':
+        document.getElementById('settings-notifications')?.scrollIntoView({ behavior: 'smooth' });
+        break;
+      case 'privacy':
+        // Scroll a la sección de privacidad si existe
+        break;
+      case '2fa':
+        // Scroll a la sección de 2FA si existe
+        break;
+      case 'devices':
+        // Scroll a la sección de dispositivos si existe
+        break;
+      case 'theme':
+        document.getElementById('settings-theme')?.scrollIntoView({ behavior: 'smooth' });
+        break;
+      case 'font':
+        document.getElementById('settings-theme')?.scrollIntoView({ behavior: 'smooth' });
+        break;
+      case 'language':
+        document.getElementById('settings-theme')?.scrollIntoView({ behavior: 'smooth' });
+        break;
+      default:
+        break;
+    }
+  };
+
   // Renderizado condicional para estado de carga
   if (loading) {
     return (
@@ -313,16 +426,7 @@ const Settings = () => {
                         className={darkMode ? 'bg-gray-700 border-gray-600 text-white' : ''}
                       />
                     </div>
-                    <div>
-                      <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                        Ubicación
-                      </label>
-                      <Input
-                        value={profile.location}
-                        onChange={(e) => setProfile({...profile, location: e.target.value})}
-                        className={darkMode ? 'bg-gray-700 border-gray-600 text-white' : ''}
-                      />
-                    </div>
+                    {/* Ubicación eliminada por requerimiento */}
                   </div>
                   <Button onClick={handleSaveProfile} className="w-full md:w-auto">
                     Guardar Cambios
@@ -408,7 +512,7 @@ const Settings = () => {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center space-x-3">
                       {darkMode ? (
                         <Moon className="w-5 h-5 text-gray-400" />
@@ -428,6 +532,21 @@ const Settings = () => {
                       checked={darkMode}
                       onCheckedChange={toggleDarkMode}
                     />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className={`font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>Idioma</p>
+                      <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Selecciona el idioma de la app</p>
+                    </div>
+                    <select
+                      value={language}
+                      onChange={e => setLanguage(e.target.value)}
+                      className={`border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500 ${darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300 text-gray-900'}`}
+                      style={{minWidth:120}}
+                    >
+                      <option value="es">Español</option>
+                      <option value="en">English</option>
+                    </select>
                   </div>
                 </CardContent>
               </Card>
@@ -454,6 +573,7 @@ const Settings = () => {
                           {section.items.map((item) => (
                             <button
                               key={item.label}
+                              onClick={() => handleQuickAccess(item.action)}
                               className={`w-full text-left p-2 rounded text-sm hover:bg-opacity-50 transition-colors ${
                                 darkMode ? 'text-gray-400 hover:bg-gray-700' : 'text-gray-600 hover:bg-gray-100'
                               }`}
@@ -479,28 +599,16 @@ const Settings = () => {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                      Miembro desde
-                    </span>
-                    <span className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                      Enero 2024
-                    </span>
+                    <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Miembro desde</span>
+                    <span className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>{accountInfo.createdAt ? String(accountInfo.createdAt) : '-'}</span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                      Pedidos realizados
-                    </span>
-                    <span className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                      12
-                    </span>
+                    <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Pedidos realizados</span>
+                    <span className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>{accountInfo.pedidos}</span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                      Puntos acumulados
-                    </span>
-                    <span className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                      2,450
-                    </span>
+                    <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Puntos acumulados</span>
+                    <span className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>{accountInfo.puntos}</span>
                   </div>
                 </CardContent>
               </Card>

@@ -24,10 +24,12 @@ import { toast } from "@/hooks/use-toast";
 import { db, storage } from "../lib/firebase";
 import { doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
 import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from "firebase/storage";
+import { getAuth } from "firebase/auth";
 
-
-// MOCK temporal de datos de empresa (debería venir de auth/context)
-const companyId = "empresa123"; // Debe ser dinámico en producción
+// Obtener el ID de la empresa autenticada
+const auth = getAuth();
+const user = auth.currentUser;
+const companyId = user ? user.uid : null; // ID dinámico del usuario actual
 
 // Tipos para TypeScript
 interface DocumentFile {

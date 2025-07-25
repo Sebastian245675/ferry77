@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
 import { Eye, EyeOff, Mail, Lock, User, Phone, MapPin } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -6,11 +7,14 @@ import { Label } from '@/components/ui/label';
 import { auth, db } from '../lib/firebase';
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { FaGoogle, FaFacebookF } from 'react-icons/fa';
 
 const Auth = () => {
+  const navigate = useNavigate();
   const [isLogin, setIsLogin] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
   const [isCompany, setIsCompany] = useState(false);
+  const [showSoon, setShowSoon] = useState(false);
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -22,6 +26,12 @@ const Auth = () => {
     category: '',
     description: ''
   });
+
+  // Mostrar mensaje temporal para social login
+  function handleSocialClick() {
+    setShowSoon(true);
+    setTimeout(() => setShowSoon(false), 2000);
+  }
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -31,41 +41,29 @@ const Auth = () => {
       if (isLogin) {
         // Login con Firebase
         const userCredential = await signInWithEmailAndPassword(auth, formData.email, formData.password);
-        // Detecta el rol en Firestore
-        const userRef = doc(db, "users", userCredential.user.uid);
-        const snap = await getDoc(userRef);
-        if (snap.exists() && snap.data().rol === "empresa") {
-          window.location.href = '/company-panel';
+        // Guardar información del usuario en localStorage para persistir la sesión
+        localStorage.setItem('userAuthenticated', 'true');
+        localStorage.setItem('userId', userCredential.user.uid);
+        // Detectar si es empresa
+        const userDoc = await getDoc(doc(db, 'users', userCredential.user.uid));
+        const userData = userDoc.exists() ? userDoc.data() : {};
+        const isEmpresa =
+          userData.type === 'company' ||
+          userData.tipo === 'empresa' ||
+          !!userData.companyName ||
+          !!userData.nick;
+        if (isEmpresa) {
+          window.location.href = '/backoffice';
         } else {
-          window.location.href = '/profession-select';
+          window.location.href = '/dashboard';
         }
       } else {
         // Registro con Firebase
         const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
-        if (isCompany) {
-          await setDoc(doc(db, "users", userCredential.user.uid), {
-            rol: "empresa",
-            companyName: formData.companyName,
-            nick: formData.nick,
-            category: formData.category,
-            description: formData.description,
-            email: formData.email,
-            phone: formData.phone,
-            location: formData.location,
-            createdAt: new Date()
-          });
-          window.location.href = '/company-panel';
-        } else {
-          await setDoc(doc(db, "users", userCredential.user.uid), {
-            rol: "usuario",
-            name: formData.name,
-            email: formData.email,
-            phone: formData.phone,
-            location: formData.location,
-            createdAt: new Date()
-          });
-          window.location.href = '/profession-select';
-        }
+        // Guardar información del usuario en localStorage para persistir la sesión
+        localStorage.setItem('userAuthenticated', 'true');
+        localStorage.setItem('userId', userCredential.user.uid);
+        window.location.href = '/dashboard';
       }
     } catch (err: any) {
       setError(err.message);
@@ -292,6 +290,32 @@ const Auth = () => {
             <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700">
               {isLogin ? 'Iniciar Sesión' : 'Crear Cuenta'}
             </Button>
+            {/* Social login icons debajo del botón principal */}
+            <div className="flex flex-col items-center mt-6 mb-2">
+              <div className="flex gap-8 justify-center">
+                <button
+                  type="button"
+                  onClick={handleSocialClick}
+                  className="w-12 h-12 rounded-full bg-white border border-gray-300 hover:bg-gray-100 flex items-center justify-center shadow transition-all text-2xl"
+                  aria-label="Google login"
+                >
+                  <FaGoogle style={{ color: '#4285F4' }} />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSocialClick}
+                  className="w-12 h-12 rounded-full bg-[#1877f3] hover:bg-[#145db2] flex items-center justify-center shadow transition-all text-2xl"
+                  aria-label="Facebook login"
+                >
+                  <FaFacebookF className="text-white" />
+                </button>
+              </div>
+              {showSoon && (
+                <div className="text-center text-sm text-orange-600 font-semibold mt-3 animate-pulse">
+                  Aún no disponible, muy pronto
+                </div>
+              )}
+            </div>
             {error && <div className="text-red-500 text-center">{error}</div>}
           </form>
 
@@ -306,6 +330,18 @@ const Auth = () => {
               </button>
             </p>
           </div>
+        </div>
+
+        {/* Botón para Formulario Supremo */}
+        <div className="mt-8 text-center">
+          <Link to="/formulario-supremo">
+            <button
+              type="button"
+              className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg text-lg transition-all"
+            >
+              Ir al Formulario Supremo
+            </button>
+          </Link>
         </div>
 
         {/* Features */}

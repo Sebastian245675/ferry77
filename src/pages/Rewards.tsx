@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Navbar from '../components/Navbar';
 import BottomNavigation from '../components/BottomNavigation';
 import { Gift, Trophy, Star, Zap, ShoppingBag, Percent, Clock, CheckCircle } from 'lucide-react';
@@ -9,6 +9,16 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
+import { db, auth } from '../lib/firebase';
+import {
+  collection,
+  addDoc,
+  getDocs,
+  query,
+  where,
+  Timestamp,
+  orderBy
+} from 'firebase/firestore';
 
 interface Reward {
   id: string;
@@ -35,16 +45,75 @@ interface Achievement {
 const Rewards = () => {
   const [promoCode, setPromoCode] = useState('');
   const [activeTab, setActiveTab] = useState<'rewards' | 'achievements' | 'codes'>('rewards');
+  const [activeCodes, setActiveCodes] = useState<any[]>([]);
+  const [loadingCodes, setLoadingCodes] = useState(false);
   const { toast } = useToast();
 
-  const userStats = {
-    totalPoints: 2450,
+
+  const [ordersCount, setOrdersCount] = useState(0);
+  const [userStats, setUserStats] = useState({
+    totalPoints: 0,
     level: 'Plata',
     nextLevel: 'Oro',
-    pointsToNextLevel: 550,
-    ordersCount: 12,
-    totalSpent: 85000
-  };
+    pointsToNextLevel: 0,
+    ordersCount: 0,
+    totalSpent: 0
+  });
+
+  // Cargar pedidos reales y puntos del usuario
+  useEffect(() => {
+    const fetchOrdersAndPoints = async () => {
+      const user = auth.currentUser;
+      if (!user) return;
+      // Pedidos
+      const solicitudRef = collection(db, "solicitud");
+      const qSolicitudes = query(solicitudRef, where("userId", "==", user.uid));
+      const solicitudesSnap = await getDocs(qSolicitudes);
+      let pedidos = 0;
+      let totalSpent = 0;
+      solicitudesSnap.forEach(doc => {
+        pedidos++;
+        const data = doc.data();
+        if (data.totalAmount) totalSpent += data.totalAmount;
+      });
+      // Puntos: 50 por cada pedido + puntos extra del usuario
+      let puntosExtra = 0;
+      let level = 'Plata';
+      let nextLevel = 'Oro';
+      let pointsToNextLevel = 0;
+      const usersRef = collection(db, "users");
+      const qUser = query(usersRef, where("uid", "==", user.uid));
+      const userSnap = await getDocs(qUser);
+      if (!userSnap.empty) {
+        const userData = userSnap.docs[0].data();
+        puntosExtra = userData.puntos || 0;
+      }
+      const puntos = pedidos * 50 + puntosExtra;
+      // Lógica de niveles
+      if (puntos >= 2000) {
+        level = 'Oro';
+        nextLevel = 'Platino';
+        pointsToNextLevel = 5000 - puntos;
+      } else if (puntos >= 1000) {
+        level = 'Plata';
+        nextLevel = 'Oro';
+        pointsToNextLevel = 2000 - puntos;
+      } else {
+        level = 'Bronce';
+        nextLevel = 'Plata';
+        pointsToNextLevel = 1000 - puntos;
+      }
+      setUserStats({
+        totalPoints: puntos,
+        level,
+        nextLevel,
+        pointsToNextLevel: pointsToNextLevel > 0 ? pointsToNextLevel : 0,
+        ordersCount: pedidos,
+        totalSpent
+      });
+    };
+    fetchOrdersAndPoints();
+  }, []);
 
   const rewards: Reward[] = [
     {
@@ -158,26 +227,90 @@ const Rewards = () => {
     }
   };
 
-  const redeemCode = () => {
-    if (promoCode.trim()) {
-      // Simular validación de código
-      const validCodes = ['FERRY10', 'WELCOME20', 'SAVE15'];
-      
-      if (validCodes.includes(promoCode.toUpperCase())) {
+
+  // Guardar y validar códigos promocionales en Firestore
+  const redeemCode = async () => {
+    if (!promoCode.trim()) return;
+    const code = promoCode.trim().toUpperCase();
+    setLoadingCodes(true);
+    try {
+      // Buscar el código en la colección 'promoCodes'
+      const q = query(collection(db, 'promoCodes'), where('code', '==', code), where('active', '==', true));
+      const querySnapshot = await getDocs(q);
+      if (querySnapshot.empty) {
         toast({
-          title: "¡Código canjeado!",
-          description: `Has aplicado el código ${promoCode.toUpperCase()} exitosamente`,
+          title: 'Código inválido',
+          description: 'El código ingresado no es válido o ha expirado',
+          variant: 'destructive',
         });
-        setPromoCode('');
-      } else {
-        toast({
-          title: "Código inválido",
-          description: "El código ingresado no es válido o ha expirado",
-          variant: "destructive"
-        });
+        setLoadingCodes(false);
+        return;
       }
+      // Verificar si el usuario ya lo canjeó
+      const user = auth.currentUser;
+      if (!user) {
+        toast({ title: 'No autenticado', description: 'Debes iniciar sesión para canjear códigos', variant: 'destructive' });
+        setLoadingCodes(false);
+        return;
+      }
+      const userCodesQ = query(
+        collection(db, 'userPromoCodes'),
+        where('userId', '==', user.uid),
+        where('code', '==', code)
+      );
+      const userCodesSnap = await getDocs(userCodesQ);
+      if (!userCodesSnap.empty) {
+        toast({ title: 'Ya canjeado', description: 'Ya has canjeado este código', variant: 'destructive' });
+        setLoadingCodes(false);
+        return;
+      }
+      // Guardar el canje
+      await addDoc(collection(db, 'userPromoCodes'), {
+        userId: user.uid,
+        code,
+        redeemedAt: Timestamp.now(),
+        active: true
+      });
+      toast({
+        title: '¡Código canjeado!',
+        description: `Has aplicado el código ${code} exitosamente`,
+      });
+      setPromoCode('');
+      fetchActiveCodes();
+    } catch (err) {
+      toast({ title: 'Error', description: 'Ocurrió un error al canjear el código', variant: 'destructive' });
     }
+    setLoadingCodes(false);
   };
+
+  // Obtener los códigos activos del usuario
+  const fetchActiveCodes = async () => {
+    setLoadingCodes(true);
+    try {
+      const user = auth.currentUser;
+      if (!user) return setActiveCodes([]);
+      const q = query(
+        collection(db, 'userPromoCodes'),
+        where('userId', '==', user.uid),
+        where('active', '==', true),
+        orderBy('redeemedAt', 'desc')
+      );
+      const snap = await getDocs(q);
+      const codes = [];
+      for (const doc of snap.docs) {
+        codes.push({ id: doc.id, ...doc.data() });
+      }
+      setActiveCodes(codes);
+    } catch (e) {
+      setActiveCodes([]);
+    }
+    setLoadingCodes(false);
+  };
+
+  useEffect(() => {
+    if (activeTab === 'codes') fetchActiveCodes();
+    // eslint-disable-next-line
+  }, [activeTab]);
 
   const levelProgress = ((userStats.totalPoints % 1000) / 1000) * 100;
 
@@ -394,12 +527,12 @@ const Rewards = () => {
                       value={promoCode}
                       onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
                       className="flex-1"
+                      disabled={loadingCodes}
                     />
-                    <Button onClick={redeemCode}>
-                      Canjear
+                    <Button onClick={redeemCode} disabled={loadingCodes}>
+                      {loadingCodes ? 'Cargando...' : 'Canjear'}
                     </Button>
                   </div>
-                  
                   <div className="bg-blue-50 p-4 rounded-lg">
                     <h4 className="font-medium text-blue-900 mb-2">Códigos de ejemplo:</h4>
                     <div className="space-y-1 text-sm text-blue-700">
@@ -408,17 +541,22 @@ const Rewards = () => {
                       <p>• SAVE15 - 15% en herramientas eléctricas</p>
                     </div>
                   </div>
-                  
                   <div className="border-t pt-4">
                     <h4 className="font-medium mb-3">Códigos Activos</h4>
                     <div className="space-y-2">
-                      <div className="flex items-center justify-between p-3 bg-green-50 rounded-lg">
-                        <div>
-                          <span className="font-medium text-green-800">ENVIO-GRATIS</span>
-                          <p className="text-sm text-green-600">Envío gratuito sin mínimo</p>
+                      {loadingCodes && <div className="text-gray-500">Cargando...</div>}
+                      {!loadingCodes && activeCodes.length === 0 && (
+                        <div className="text-gray-500">No tienes códigos activos</div>
+                      )}
+                      {activeCodes.map((code) => (
+                        <div key={code.id} className="flex items-center justify-between p-3 bg-green-50 rounded-lg">
+                          <div>
+                            <span className="font-medium text-green-800">{code.code}</span>
+                            <p className="text-sm text-green-600">Canjeado el {code.redeemedAt?.toDate ? code.redeemedAt.toDate().toLocaleDateString() : ''}</p>
+                          </div>
+                          <Badge className="bg-green-100 text-green-800">Activo</Badge>
                         </div>
-                        <Badge className="bg-green-100 text-green-800">Activo</Badge>
-                      </div>
+                      ))}
                     </div>
                   </div>
                 </CardContent>

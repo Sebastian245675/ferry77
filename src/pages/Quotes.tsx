@@ -8,7 +8,7 @@ import { db } from "../lib/firebase";
 
 const Quotes = () => {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState('received');
+  const [activeTab, setActiveTab] = useState('received'); // Por defecto muestra las recibidas
   const [quotes, setQuotes] = useState<any[]>([]);
 
   // Si tienes el id de la solicitud en la URL:
@@ -30,7 +30,8 @@ const Quotes = () => {
   }, []);
 
   const tabs = [
-    { id: 'received', name: 'Recibidas', count: quotes.filter(q => q.status === 'pending').length },
+    { id: 'received', name: 'Recibidas', count: quotes.filter(q => q.status === 'recibida').length },
+    { id: 'pending', name: 'Pendientes', count: quotes.filter(q => q.status === 'pending').length },
     { id: 'accepted', name: 'Aceptadas', count: quotes.filter(q => q.status === 'accepted' || q.status === 'confirmado').length },
     { id: 'declined', name: 'Rechazadas', count: quotes.filter(q => q.status === 'declined').length },
   ];
@@ -38,7 +39,9 @@ const Quotes = () => {
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'pending': return 'bg-yellow-100 text-yellow-800';
+      case 'recibida': return 'bg-blue-100 text-blue-800';
       case 'accepted': return 'bg-green-100 text-green-800';
+      case 'confirmado': return 'bg-green-100 text-green-800';
       case 'declined': return 'bg-red-100 text-red-800';
       default: return 'bg-gray-100 text-gray-800';
     }
@@ -46,7 +49,9 @@ const Quotes = () => {
 
   const getStatusIcon = (status: string) => {
     switch (status) {
+      case 'recibida': return <Package className="w-4 h-4" />;
       case 'accepted': return <CheckCircle className="w-4 h-4" />;
+      case 'confirmado': return <CheckCircle className="w-4 h-4" />;
       case 'declined': return <XCircle className="w-4 h-4" />;
       default: return <Clock className="w-4 h-4" />;
     }
@@ -54,9 +59,11 @@ const Quotes = () => {
 
   const filteredQuotes = quotes.filter(quote => {
     switch (activeTab) {
+      case 'received': return quote.status === 'recibida';
+      case 'pending': return quote.status === 'pending';
       case 'accepted': return quote.status === 'accepted' || quote.status === 'confirmado';
       case 'declined': return quote.status === 'declined';
-      default: return quote.status === 'pending';
+      default: return quote.status === 'recibida'; // Por defecto muestra las recibidas
     }
   });
 
@@ -66,11 +73,11 @@ const Quotes = () => {
       const q = query(collection(db, "cotizaciones"), where("requestId", "==", requestId));
       const snapshot = await getDocs(q);
 
-      // 2. Actualizar cada cotización: la aceptada a "accepted", las demás a "declined"
+      // 2. Actualizar cada cotización: la aceptada a "recibida", las demás a "declined"
       const batchUpdates = [];
       snapshot.forEach(docSnap => {
         if (docSnap.id === quoteId) {
-          batchUpdates.push(updateDoc(doc(db, "cotizaciones", docSnap.id), { status: "accepted" }));
+          batchUpdates.push(updateDoc(doc(db, "cotizaciones", docSnap.id), { status: "recibida" }));
         } else {
           batchUpdates.push(updateDoc(doc(db, "cotizaciones", docSnap.id), { status: "declined" }));
         }
@@ -85,7 +92,7 @@ const Quotes = () => {
         prev.map(q =>
           q.requestId === requestId
             ? q.id === quoteId
-              ? { ...q, status: "accepted" }
+              ? { ...q, status: "recibida" }
               : { ...q, status: "declined" }
             : q
         )
@@ -113,7 +120,7 @@ const Quotes = () => {
     console.log('View quote details:', quoteId);
   };
 
-  const newQuotesCount = quotes.filter(q => q.status === 'pending').length;
+  const newQuotesCount = quotes.filter(q => q.status === 'recibida').length;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -132,7 +139,7 @@ const Quotes = () => {
               <div className="flex items-center space-x-4">
                 <div className="bg-primary-50 rounded-lg p-4">
                   <MessageSquare className="w-6 h-6 text-primary-600 mx-auto mb-1" />
-                  <p className="text-sm text-gray-600">Total recibidas</p>
+                  <p className="text-sm text-gray-600">Recibidas</p>
                   <p className="text-xl font-bold text-primary-600">{newQuotesCount}</p>
                 </div>
               </div>
@@ -189,7 +196,12 @@ const Quotes = () => {
                     <div className="flex items-center space-x-4">
                       <span className={`px-3 py-1 rounded-full text-xs font-medium flex items-center space-x-1 ${getStatusColor(quote.status)}`}>
                         {getStatusIcon(quote.status)}
-                        <span className="capitalize">{quote.status === 'pending' ? 'Pendiente' : quote.status === 'accepted' ? 'Aceptada' : 'Rechazada'}</span>
+                        <span className="capitalize">
+                          {quote.status === 'pending' ? 'Pendiente' : 
+                           quote.status === 'recibida' ? 'Recibida' : 
+                           quote.status === 'accepted' ? 'Aceptada' : 
+                           'Rechazada'}
+                        </span>
                       </span>
                       
                       <div className="text-right">
@@ -279,14 +291,14 @@ const Quotes = () => {
                   <div className="flex flex-col sm:flex-row gap-3">
                     <button
                       onClick={() => 
-                        (quote.status === 'accepted' || quote.status === 'confirmado') 
+                        (quote.status === 'recibida' || quote.status === 'accepted' || quote.status === 'confirmado') 
                           ? navigate(`/order-status?id=${quote.id}`)
                           : handleViewDetails(quote.id)
                       }
                       className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-3 rounded-lg font-medium transition-colors flex items-center justify-center space-x-2"
                     >
                       <Eye size={16} />
-                      <span>{(quote.status === 'accepted' || quote.status === 'confirmado') ? 'Ver Seguimiento' : 'Ver Detalles'}</span>
+                      <span>{(quote.status === 'recibida' || quote.status === 'accepted' || quote.status === 'confirmado') ? 'Ver Seguimiento' : 'Ver Detalles'}</span>
                     </button>
                     
                     {quote.status === 'pending' && (
@@ -309,7 +321,7 @@ const Quotes = () => {
                       </>
                     )}
 
-                    {(quote.status === 'accepted' || quote.status === 'confirmado') && quote.deliveryStatus && (
+                    {(quote.status === 'recibida' || quote.status === 'accepted' || quote.status === 'confirmado') && quote.deliveryStatus && (
                       <div className="flex-1 p-3 rounded-lg bg-gray-50">
                         <p className="text-sm font-medium mb-1">Estado del pedido:</p>
                         <div className="flex items-center">
@@ -355,6 +367,32 @@ const Quotes = () => {
                     )}
                   </div>
 
+                  {/* Info de Empresa y Pedido Unificados - Solo para recibidas/aceptadas */}
+                  {(quote.status === 'recibida' || quote.status === 'accepted' || quote.status === 'confirmado') && (
+                    <div className="mt-4 pt-4 border-t border-blue-100 bg-blue-50 p-4 rounded-lg">
+                      <h4 className="text-sm font-medium text-blue-800 mb-2 flex items-center">
+                        <CheckCircle className="w-4 h-4 mr-1" /> 
+                        Pedido recibido por {quote.company.name}
+                      </h4>
+                      <div className="flex items-center space-x-3 mb-2">
+                        <img 
+                          src={quote.company.logo} 
+                          alt={quote.company.name}
+                          className="w-8 h-8 rounded-full object-cover border border-blue-200"
+                        />
+                        <div>
+                          <p className="font-medium text-blue-900">{quote.requestTitle}</p>
+                          <p className="text-xs text-blue-700">
+                            Recibido el: {new Date().toLocaleDateString()}
+                          </p>
+                        </div>
+                      </div>
+                      <p className="text-xs text-blue-600">
+                        Tu pedido está siendo procesado. El proveedor te contactará pronto.
+                      </p>
+                    </div>
+                  )}
+
                   {/* Expiry */}
                   <div className="mt-4 pt-4 border-t">
                     <p className="text-xs text-gray-500">
@@ -373,7 +411,8 @@ const Quotes = () => {
               </div>
               <h3 className="text-lg font-medium text-gray-900 mb-2">No hay cotizaciones</h3>
               <p className="text-gray-600">
-                {activeTab === 'received' ? 'Aún no has recibido cotizaciones' : 
+                {activeTab === 'received' ? 'No tienes cotizaciones recibidas' :
+                 activeTab === 'pending' ? 'No tienes cotizaciones pendientes' : 
                  activeTab === 'accepted' ? 'No has aceptado ninguna cotización' : 
                  'No has rechazado ninguna cotización'}
               </p>

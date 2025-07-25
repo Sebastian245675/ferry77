@@ -1,4 +1,20 @@
-import React, { useState, useEffect } from "react";
+import { 
+  DollarSign, 
+  MapPin, 
+  Calendar, 
+  MessageSquare, 
+  User, 
+  CalendarIcon, 
+  ClockIcon, 
+  AlertCircle, 
+  PlusCircle, 
+  XCircle 
+} from "lucide-react";
+import { Separator } from "../components/ui/separator";
+import { ContactClientButton } from "../components/ContactClientButton";
+import { AvatarFallback } from "../components/ui/avatar";
+
+import React, { useEffect, useState } from "react";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -6,100 +22,82 @@ import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
 import { ScrollArea } from "../components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "../components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "../components/ui/dropdown-menu";
-import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar";
-import { Separator } from "../components/ui/separator";
-import {
-  FileText,
-  Search,
-  Filter,
-  Calendar,
-  Clock,
-  DollarSign,
-  MoreVertical,
-  Send,
-  Package,
-  AlertCircle,
-  CheckCircle,
-  XCircle,
-  MessageSquare,
-  User,
-  MapPin,
-  Calendar as CalendarIcon,
-  PlusCircle,
-  Clock as ClockIcon
-} from "lucide-react";
-import { toast } from "../hooks/use-toast";
+  collection,
+  query,
+  where,
+  orderBy,
+  onSnapshot,
+  getDocs,
+  addDoc,
+  updateDoc,
+  doc,
+  increment,
+  Timestamp
+} from "firebase/firestore";
+import { getAuth } from "firebase/auth";
+import { db } from "../lib/firebase";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { db } from "../lib/firebase";
-import { collection, getDocs, query, where, addDoc, updateDoc, doc, getDoc, orderBy, Timestamp, onSnapshot, increment } from "firebase/firestore";
-import { getAuth } from "firebase/auth";
-import ContactClientButton from "../components/ContactClientButton";
+import { toast } from "../hooks/use-toast";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem
+} from "../components/ui/dropdown-menu";
+import { Avatar, AvatarImage } from "../components/ui/avatar";
+import { Clock, CheckCircle, Send, Filter, Search, FileText, Package } from "lucide-react";
 
-// Interfaces para tipado
-interface QuoteRequest {
+// Tipos locales (copiados de QuoteProposal)
+type QuoteRequest = {
   id: string;
-  clientId: string;
-  clientName: string;
-  clientAvatar?: string;
-  title: string;
-  description: string;
-  category: string;
-  items?: QuoteItem[];
-  status: 'pending' | 'quoted' | 'accepted' | 'rejected';
-  location?: string;
-  createdAt: Timestamp | number;
-  urgency?: 'low' | 'medium' | 'high';
-  budget?: number;
-  attachments?: string[];
-  deadline?: Timestamp | number;
-}
-
-interface QuoteItem {
-  name: string;
+  title?: string;
   description?: string;
+  location?: string;
+  budget?: number;
+  urgency?: string;
+  createdAt?: any;
+  userId?: string;
+  profession?: string;
+  items?: Array<{
+    name: string;
+    quantity: number;
+    specifications?: string;
+  }>;
+  clientId?: string;
+  clientName?: string;
+  clientAvatar?: string;
+  category?: string;
+  status?: 'pending' | 'quoted' | 'confirmed' | 'accepted' | 'rejected' | string;
+  attachments?: any[];
+  deadline?: any;
+};
+type QuoteResponseItem = {
+  name: string;
+  description: string;
   quantity: number;
-}
-
-interface QuoteResponse {
+  price: number;
+};
+type QuoteResponse = {
   id?: string;
   requestId: string;
   companyId: string;
   companyName: string;
   price: number;
   description: string;
-  items?: QuoteResponseItem[];
-  deliveryTime?: string;
-  validUntil?: Timestamp | number;
-  attachments?: string[];
-  status: 'sent' | 'viewed' | 'accepted' | 'rejected';
-  createdAt: Timestamp | number;
-}
+  items: QuoteResponseItem[];
+  deliveryTime: string;
+  validUntil?: any;
+  attachments?: any[];
+  status: string;
+  createdAt: any;
+};
 
-interface QuoteResponseItem {
-  name: string;
-  description?: string;
-  quantity: number;
-  price: number;
-}
+function PendingQuotes() {
 
-// Componente Principal
-const PendingQuotes: React.FC = () => {
-  // Estados
+// ...resto del código sin cambios...
   const [quoteRequests, setQuoteRequests] = useState<QuoteRequest[]>([]);
   const [sentQuotes, setSentQuotes] = useState<QuoteResponse[]>([]);
   const [selectedRequest, setSelectedRequest] = useState<QuoteRequest | null>(null);
@@ -128,24 +126,28 @@ const PendingQuotes: React.FC = () => {
   const user = auth.currentUser;
 
   // Cargar solicitudes de cotización pendientes
+
   useEffect(() => {
     if (!user) return;
-    
     setIsLoading(true);
+    console.log("[PendingQuotes] Usuario actual:", user.uid, user.displayName);
     
-    // Consultar todas las solicitudes de cotización - usamos "solicitud" en lugar de "quoteRequests"
+    // En lugar de filtrar por estado en la consulta, obtenemos TODAS las solicitudes
     const quoteRequestsQuery = query(
       collection(db, "solicitud"),
-      where("status", "in", ["pendiente", "cotizando"]),
       orderBy("createdAt", "desc")
     );
-
     const unsubscribe = onSnapshot(quoteRequestsQuery, async (snapshot) => {
       const requests: QuoteRequest[] = [];
+      const allQuotes: QuoteRequest[] = [];
+      
+      console.log("[PendingQuotes] Total de solicitudes encontradas:", snapshot.docs.length);
       
       for (const doc of snapshot.docs) {
         const data = doc.data();
-        requests.push({
+        
+        // Convertir cada documento a nuestro formato QuoteRequest para uso posterior
+        const quoteRequest: QuoteRequest = {
           id: doc.id,
           clientId: data.userId || "",
           clientName: data.userName || data.clientName || "Cliente",
@@ -155,7 +157,8 @@ const PendingQuotes: React.FC = () => {
           category: data.profession || data.category || "General",
           items: data.items || [],
           status: (data.status === "pendiente" || data.status === "cotizando") ? "pending" :
-                 (data.status === "confirmado") ? "accepted" : "quoted",
+                 (data.status === "confirmado") ? "confirmed" :
+                 (data.status === "accepted") ? "accepted" : "quoted",
           location: data.location || "",
           createdAt: data.createdAt || Timestamp.now(),
           urgency: data.urgency === "alta" ? "high" : 
@@ -163,13 +166,68 @@ const PendingQuotes: React.FC = () => {
           budget: data.budget || 0,
           attachments: data.attachments || [],
           deadline: data.deadline
-        });
-      }
+        };
+        
+        // Guardar todas las solicitudes para posible uso posterior
+        allQuotes.push(quoteRequest);
+        
+        // Comprobar si esta solicitud es para nuestra empresa y tiene un estado válido
+        const validStatus = data.status === "pendiente" || data.status === "cotizando" || data.status === "confirmado";
+        if (!validStatus) continue;
 
-      setQuoteRequests(requests);
+        console.log(`[PendingQuotes] Procesando solicitud ${doc.id}, status: ${data.status}`);
+        
+        let match = false;
+        // 1. selectedCompanyIds (array simple de IDs)
+        if (data.selectedCompanyIds && Array.isArray(data.selectedCompanyIds)) {
+          if (data.selectedCompanyIds.includes(user.uid)) {
+            console.log(`[PendingQuotes] Coincidencia por selectedCompanyIds para ${doc.id}`);
+            match = true;
+          }
+        }
+        // 2. selectedCompanies (array de objetos o strings)
+        if (!match && data.selectedCompanies && Array.isArray(data.selectedCompanies)) {
+          console.log(`[PendingQuotes] Buscando en selectedCompanies para ${doc.id}:`, data.selectedCompanies);
+          match = data.selectedCompanies.some(company => {
+            if (typeof company === 'string') {
+              const matches = company === user.uid;
+              if (matches) console.log(`[PendingQuotes] Coincidencia string en selectedCompanies para ${doc.id}`);
+              return matches;
+            }
+            if (company && typeof company === 'object') {
+              const idMatch = company.id === user.uid;
+              const companyIdMatch = company.companyId === user.uid;
+              const matches = idMatch || companyIdMatch;
+              if (matches) console.log(`[PendingQuotes] Coincidencia objeto en selectedCompanies para ${doc.id}`);
+              return matches;
+            }
+            return false;
+          });
+        }
+        
+        if (match) {
+          console.log(`[PendingQuotes] Añadiendo solicitud ${doc.id} a la lista`);
+          requests.push(quoteRequest);
+        }
+      }
+      
+      if (requests.length === 0) {
+        console.log("[PendingQuotes] No se encontraron solicitudes para esta empresa. Mostrando todas las solicitudes en estado pendiente/cotizando/confirmado.");
+        // Si no hay solicitudes filtradas, mostrar todas las pendientes/cotizando/confirmado
+        const pendingQuotes = allQuotes.filter(q => 
+          (q.status === "pending") // Ya mapeamos los estados pendiente/cotizando/confirmado a "pending"
+        );
+        console.log(`[PendingQuotes] Mostrando ${pendingQuotes.length} solicitudes no filtradas.`);
+        setQuoteRequests(pendingQuotes);
+      } else {
+        console.log(`[PendingQuotes] Mostrando ${requests.length} solicitudes filtradas para esta empresa.`);
+        setQuoteRequests(requests);
+      }
       setIsLoading(false);
     });
     
+    // Importante: cerrar la suscripción cuando el componente se desmonte
+    return () => unsubscribe();
     // Cargar cotizaciones enviadas por esta empresa
     const loadSentQuotes = async () => {
       try {
@@ -178,7 +236,6 @@ const PendingQuotes: React.FC = () => {
           where("companyId", "==", user.uid),
           orderBy("createdAt", "desc")
         );
-        
         const sentQuotesSnapshot = await getDocs(sentQuotesQuery);
         const quotes: QuoteResponse[] = sentQuotesSnapshot.docs.map(doc => {
           const data = doc.data();
@@ -199,15 +256,12 @@ const PendingQuotes: React.FC = () => {
             createdAt: data.createdAt || Timestamp.now()
           };
         });
-        
         setSentQuotes(quotes);
       } catch (error) {
         console.error("Error cargando cotizaciones enviadas:", error);
       }
     };
-    
     loadSentQuotes();
-    
     return () => unsubscribe();
   }, [user]);
 
@@ -218,8 +272,11 @@ const PendingQuotes: React.FC = () => {
       request.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
       request.clientName.toLowerCase().includes(searchTerm.toLowerCase());
     
+    // Caso especial: "pendientes" debería incluir también las confirmadas
     const matchesStatus = 
-      statusFilter === "all" || request.status === statusFilter;
+      statusFilter === "all" || 
+      request.status === statusFilter || 
+      (statusFilter === "pending" && request.status === "confirmed");
     
     return matchesSearch && matchesStatus;
   });
@@ -556,12 +613,16 @@ const PendingQuotes: React.FC = () => {
                           <Badge 
                             variant={
                               request.status === 'pending' ? 'default' : 
+                              request.status === 'confirmed' ? 'default' :
                               request.status === 'quoted' ? 'secondary' : 
                               request.status === 'accepted' ? 'outline' : 'destructive'
                             }
-                            className="px-3 py-1"
+                            className={`px-3 py-1 ${
+                              request.status === 'confirmed' ? 'bg-green-600 hover:bg-green-700 text-white' : ''
+                            }`}
                           >
                             {request.status === 'pending' ? 'Pendiente' : 
+                             request.status === 'confirmed' ? 'Confirmado' :
                              request.status === 'quoted' ? 'En proceso' : 
                              request.status === 'accepted' ? 'Aceptado' : 'Rechazado'}
                           </Badge>
@@ -850,7 +911,7 @@ const PendingQuotes: React.FC = () => {
                               {selectedRequest.items.map((item, index) => (
                                 <tr key={index}>
                                   <td className="px-4 py-3 text-sm">{item.name}</td>
-                                  <td className="px-4 py-3 text-sm text-gray-500">{item.description || '-'}</td>
+                                  <td className="px-4 py-3 text-sm text-gray-500">{item.specifications ?? '-'}</td>
                                   <td className="px-4 py-3 text-sm text-right">{item.quantity}</td>
                                 </tr>
                               ))}
@@ -1180,6 +1241,6 @@ const PendingQuotes: React.FC = () => {
       </Dialog>
     </div>
   );
-};
+}
 
 export default PendingQuotes;
