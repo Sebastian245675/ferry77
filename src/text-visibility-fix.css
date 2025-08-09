@@ -1,0 +1,82 @@
+/* Forzar colores de texto visibles */
+input, 
+textarea, 
+select, 
+button,
+.text-input,
+[type="text"],
+[type="email"],
+[type="password"],
+[type="number"],
+[type="tel"],
+[type="url"],
+[type="search"],
+[type="date"],
+[contenteditable="true"] {
+  color: #000000 !important;
+  background-color: #ffffff !important;
+  border: 1px solid #d1d5db !important;
+  border-radius: 0.375rem !important;
+  padding: 0.5rem 0.75rem !important;
+  line-height: 1.5 !important;
+  font-size: 1rem !important;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #9ca3af !important;
+  opacity: 1 !important;
+}
+
+/* Estilo específico para campos enfocados */
+input:focus, 
+textarea:focus, 
+select:focus,
+[contenteditable="true"]:focus {
+  outline: none !important;
+  border-color: #2563eb !important;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2) !important;
+}
+
+/* Estilo para textos y etiquetas */
+label, p, h1, h2, h3, h4, h5, h6, span, div {
+  color: #111827 !important;
+}
+
+/* Colores específicos para textos secundarios */
+.text-gray-500, .text-gray-600, .text-gray-700 {
+  color: #6b7280 !important;
+}
+
+/* Estilo para botones */
+button, 
+.button,
+[type="button"],
+[type="submit"] {
+  background-color: #2563eb;
+  color: white !important;
+  font-weight: 500;
+  border-radius: 0.375rem;
+  padding: 0.5rem 1rem;
+  transition: background-color 0.2s;
+}
+
+button:hover,
+.button:hover,
+[type="button"]:hover,
+[type="submit"]:hover {
+  background-color: #1d4ed8;
+}
+
+/* Botones secundarios */
+button.secondary,
+.button.secondary {
+  background-color: #f3f4f6;
+  color: #111827 !important;
+  border: 1px solid #d1d5db;
+}
+
+button.secondary:hover,
+.button.secondary:hover {
+  background-color: #e5e7eb;
+}

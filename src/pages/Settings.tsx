@@ -8,9 +8,13 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
-import { getAuth, signOut, updateProfile } from "firebase/auth";
+import { getAuth, signOut, updateProfile, updatePassword, EmailAuthProvider, reauthenticateWithCredential, sendEmailVerification } from "firebase/auth";
 import { doc, setDoc, getDoc, updateDoc, collection, query, where, getDocs } from "firebase/firestore";
 import { db } from "../lib/firebase";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { applyDarkTheme, applyLightTheme, initializeTheme } from '../theme-utils';
 
 const Settings = () => {
   const navigate = useNavigate();
@@ -29,6 +33,41 @@ const Settings = () => {
     location: ''
   });
   const [language, setLanguage] = useState('es');
+  const [passwordChange, setPasswordChange] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: ''
+  });
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
+  const [isVerified, setIsVerified] = useState(false);
+
+  // Efecto para inicializar el tema al cargar la aplicación
+  useEffect(() => {
+    // Inicializar el tema usando nuestras utilidades
+    initializeTheme();
+    
+    // Si se encuentra un tema en localStorage, actualizar el estado
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme === 'dark') {
+      setDarkMode(true);
+    }
+  }, []);
+
+  // Modificar las propiedades del tema cuando cambie darkMode
+  useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+      document.body.classList.add('dark-mode');
+      document.body.style.setProperty('background-color', '#111827', 'important');
+      document.documentElement.style.setProperty('background-color', '#111827', 'important');
+    } else {
+      document.documentElement.classList.remove('dark');
+      document.body.classList.remove('dark-mode');
+      document.body.style.setProperty('background-color', '#f9fafb', 'important');
+      document.documentElement.style.setProperty('background-color', '#f9fafb', 'important');
+    }
+  }, [darkMode]);
 
   // Guardar idioma automáticamente al cambiar
   useEffect(() => {
@@ -85,8 +124,15 @@ const Settings = () => {
           const data = settingsSnap.data();
           // Cargar tema
           if (data.darkMode !== undefined) {
-            setDarkMode(data.darkMode);
-            document.documentElement.classList.toggle('dark', data.darkMode);
+            const isDarkMode = data.darkMode;
+            setDarkMode(isDarkMode);
+            
+            // Aplicar tema usando nuestras utilidades
+            if (isDarkMode) {
+              applyDarkTheme();
+            } else {
+              applyLightTheme();
+            }
           }
           // Cargar notificaciones
           if (data.notifications) {
@@ -103,6 +149,14 @@ const Settings = () => {
           if (data.phone) {
             setProfile(prev => ({ ...prev, phone: data.phone }));
           }
+          
+          // Cargar estado de verificación
+          setIsVerified(user.emailVerified);
+          
+          // Cargar estado de autenticación de dos factores (si existe en los datos)
+          if (data.twoFactorEnabled !== undefined) {
+            setTwoFactorEnabled(data.twoFactorEnabled);
+          }
         } else {
           // Si no existen configuraciones, crear documento con valores predeterminados
           await setDoc(userSettingsRef, {
@@ -114,6 +168,7 @@ const Settings = () => {
               marketing: false
             },
             language: 'es',
+            twoFactorEnabled: false,
             createdAt: new Date()
           });
         }
@@ -220,12 +275,129 @@ const Settings = () => {
     }
   };
 
+  // Función para cambiar la contraseña
+  const handleChangePassword = async () => {
+    if (!user) return;
+    
+    setIsChangingPassword(true);
+    
+    try {
+      // Validaciones básicas
+      if (passwordChange.newPassword.length < 6) {
+        throw new Error('La nueva contraseña debe tener al menos 6 caracteres');
+      }
+      
+      if (passwordChange.newPassword !== passwordChange.confirmPassword) {
+        throw new Error('Las contraseñas no coinciden');
+      }
+      
+      // Reautenticar al usuario antes de cambiar la contraseña
+      const credential = EmailAuthProvider.credential(
+        user.email || '',
+        passwordChange.currentPassword
+      );
+      
+      await reauthenticateWithCredential(user, credential);
+      
+      // Cambiar la contraseña
+      await updatePassword(user, passwordChange.newPassword);
+      
+      // Limpiar el formulario
+      setPasswordChange({
+        currentPassword: '',
+        newPassword: '',
+        confirmPassword: ''
+      });
+      
+      toast({
+        title: "Contraseña actualizada",
+        description: "Tu contraseña ha sido cambiada exitosamente",
+      });
+      
+    } catch (error) {
+      console.error("Error al cambiar la contraseña:", error);
+      let errorMessage = "Error al cambiar la contraseña";
+      
+      if (error.code === 'auth/wrong-password') {
+        errorMessage = "La contraseña actual es incorrecta";
+      } else if (error.code === 'auth/requires-recent-login') {
+        errorMessage = "Necesitas iniciar sesión nuevamente antes de cambiar tu contraseña";
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      toast({
+        title: "Error",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    } finally {
+      setIsChangingPassword(false);
+    }
+  };
+  
+  // Función para enviar correo de verificación
+  const handleSendVerificationEmail = async () => {
+    if (!user) return;
+    
+    try {
+      await sendEmailVerification(user);
+      toast({
+        title: "Correo enviado",
+        description: "Hemos enviado un correo de verificación a tu dirección de email",
+      });
+    } catch (error) {
+      console.error("Error al enviar correo de verificación:", error);
+      toast({
+        title: "Error",
+        description: "No pudimos enviar el correo de verificación. Intenta más tarde.",
+        variant: "destructive",
+      });
+    }
+  };
+  
+  // Función para activar/desactivar autenticación de dos factores
+  const toggleTwoFactor = async (enabled: boolean) => {
+    if (!user) return;
+    
+    try {
+      // Actualizar estado en Firestore
+      const userSettingsRef = doc(db, "userSettings", user.uid);
+      await updateDoc(userSettingsRef, {
+        twoFactorEnabled: enabled,
+        updatedAt: new Date()
+      });
+      
+      setTwoFactorEnabled(enabled);
+      
+      toast({
+        title: enabled ? "Autenticación de dos factores activada" : "Autenticación de dos factores desactivada",
+        description: enabled 
+          ? "Tu cuenta ahora está más segura" 
+          : "Se ha desactivado la autenticación de dos factores",
+      });
+    } catch (error) {
+      console.error("Error al actualizar autenticación de dos factores:", error);
+      toast({
+        title: "Error",
+        description: "No pudimos actualizar la configuración de seguridad",
+        variant: "destructive",
+      });
+    }
+  };
+
   const toggleDarkMode = async () => {
     if (!user) return;
     
     const newDarkMode = !darkMode;
     setDarkMode(newDarkMode);
-    document.documentElement.classList.toggle('dark', newDarkMode);
+    
+    // Aplicar tema utilizando nuestras utilidades
+    if (newDarkMode) {
+      applyDarkTheme();
+    } else {
+      applyLightTheme();
+    }
     
     try {
       // Guardar preferencia en Firestore
@@ -237,7 +409,7 @@ const Settings = () => {
       
       toast({
         title: newDarkMode ? "Tema oscuro activado" : "Tema claro activado",
-        description: "El cambio se ha aplicado correctamente",
+        description: "El cambio se ha aplicado correctamente a toda la aplicación",
       });
     } catch (error) {
       console.error("Error al guardar el tema:", error);
@@ -314,13 +486,12 @@ const Settings = () => {
         navigate('/profile');
         break;
       case 'password':
-        navigate('/auth'); // O ruta de cambio de contraseña si existe
+        document.getElementById('change-password-dialog-trigger')?.click();
         break;
       case 'verification':
-        navigate('/backoffice/verification');
+        document.getElementById('verification-section')?.scrollIntoView({ behavior: 'smooth' });
         break;
       case 'notifications':
-        // Scroll a la sección de notificaciones
         document.getElementById('settings-notifications')?.scrollIntoView({ behavior: 'smooth' });
         break;
       case 'email':
@@ -330,13 +501,16 @@ const Settings = () => {
         document.getElementById('settings-notifications')?.scrollIntoView({ behavior: 'smooth' });
         break;
       case 'privacy':
-        // Scroll a la sección de privacidad si existe
+        document.getElementById('privacy-section')?.scrollIntoView({ behavior: 'smooth' });
         break;
       case '2fa':
-        // Scroll a la sección de 2FA si existe
+        document.getElementById('2fa-section')?.scrollIntoView({ behavior: 'smooth' });
         break;
       case 'devices':
-        // Scroll a la sección de dispositivos si existe
+        toast({
+          title: "Próximamente",
+          description: "Esta función estará disponible en una próxima actualización",
+        });
         break;
       case 'theme':
         document.getElementById('settings-theme')?.scrollIntoView({ behavior: 'smooth' });
@@ -355,13 +529,13 @@ const Settings = () => {
   // Renderizado condicional para estado de carga
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50">
+      <div className={`min-h-screen ${darkMode ? 'dark-mode bg-gray-900' : 'bg-gray-50'}`} style={{backgroundColor: darkMode ? '#111827' : '#f9fafb'}}>
         <Navbar />
         <main className="pb-20 md:pb-8">
           <div className="max-w-6xl mx-auto px-4 py-6">
             <div className="flex flex-col items-center justify-center min-h-[60vh]">
               <div className="w-12 h-12 border-4 border-primary-200 border-t-primary-600 rounded-full animate-spin"></div>
-              <p className="mt-4 text-gray-600">Cargando configuración...</p>
+              <p className={`mt-4 ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>Cargando configuración...</p>
             </div>
           </div>
         </main>
@@ -371,7 +545,14 @@ const Settings = () => {
   }
 
   return (
-    <div className={`min-h-screen ${darkMode ? 'dark bg-gray-900' : 'bg-gray-50'}`}>
+    <div 
+      className={`min-h-screen ${darkMode ? 'dark bg-gray-900 text-white' : 'bg-gray-50 text-gray-900'}`}
+      style={{
+        backgroundColor: darkMode ? '#111827' : '#f9fafb', 
+        color: darkMode ? '#f3f4f6' : '#111827',
+        transition: 'background-color 0.2s ease-in-out, color 0.2s ease-in-out'
+      }}
+    >
       <Navbar />
       
       <main className="pb-20 md:pb-8">
@@ -434,7 +615,161 @@ const Settings = () => {
                 </CardContent>
               </Card>
 
-              <Card className={darkMode ? 'bg-gray-800 border-gray-700' : ''}>
+              {/* Seguridad y verificación */}
+              <Card className={darkMode ? 'bg-gray-800 border-gray-700' : ''} id="password-section">
+                <CardHeader>
+                  <CardTitle className={`flex items-center space-x-2 ${darkMode ? 'text-white' : ''}`}>
+                    <Shield className="w-5 h-5" />
+                    <span>Seguridad de la Cuenta</span>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* Cambio de contraseña */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between mb-2">
+                      <div>
+                        <p className={`font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                          Cambiar Contraseña
+                        </p>
+                        <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                          Actualiza tu contraseña regularmente para mayor seguridad
+                        </p>
+                      </div>
+                      <Dialog>
+                        <DialogTrigger asChild>
+                          <Button 
+                            variant="outline" 
+                            id="change-password-dialog-trigger"
+                          >
+                            Cambiar
+                          </Button>
+                        </DialogTrigger>
+                        <DialogContent className={darkMode ? 'bg-gray-800 text-white' : ''}>
+                          <DialogHeader>
+                            <DialogTitle className={darkMode ? 'text-white' : ''}>Cambiar Contraseña</DialogTitle>
+                            <DialogDescription className={darkMode ? 'text-gray-400' : ''}>
+                              Introduce tu contraseña actual y la nueva contraseña
+                            </DialogDescription>
+                          </DialogHeader>
+                          <div className="space-y-4 py-4">
+                            <div className="space-y-2">
+                              <Label htmlFor="current-password" className={darkMode ? 'text-gray-300' : ''}>
+                                Contraseña Actual
+                              </Label>
+                              <Input 
+                                id="current-password" 
+                                type="password" 
+                                value={passwordChange.currentPassword}
+                                onChange={(e) => setPasswordChange({...passwordChange, currentPassword: e.target.value})}
+                                className={darkMode ? 'bg-gray-700 border-gray-600 text-white' : ''}
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor="new-password" className={darkMode ? 'text-gray-300' : ''}>
+                                Nueva Contraseña
+                              </Label>
+                              <Input 
+                                id="new-password" 
+                                type="password" 
+                                value={passwordChange.newPassword}
+                                onChange={(e) => setPasswordChange({...passwordChange, newPassword: e.target.value})}
+                                className={darkMode ? 'bg-gray-700 border-gray-600 text-white' : ''}
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor="confirm-password" className={darkMode ? 'text-gray-300' : ''}>
+                                Confirmar Contraseña
+                              </Label>
+                              <Input 
+                                id="confirm-password" 
+                                type="password" 
+                                value={passwordChange.confirmPassword}
+                                onChange={(e) => setPasswordChange({...passwordChange, confirmPassword: e.target.value})}
+                                className={darkMode ? 'bg-gray-700 border-gray-600 text-white' : ''}
+                              />
+                            </div>
+                          </div>
+                          <DialogFooter>
+                            <Button 
+                              type="submit" 
+                              onClick={handleChangePassword}
+                              disabled={isChangingPassword}
+                            >
+                              {isChangingPassword ? "Actualizando..." : "Guardar Cambios"}
+                            </Button>
+                          </DialogFooter>
+                        </DialogContent>
+                      </Dialog>
+                    </div>
+                  </div>
+                  
+                  {/* Verificación de Email */}
+                  <div className="pt-4 border-t" id="verification-section">
+                    <div className="flex items-center justify-between mb-2">
+                      <div>
+                        <p className={`font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                          Verificación de Email
+                        </p>
+                        <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                          Verifica tu dirección de correo para mayor seguridad
+                        </p>
+                      </div>
+                      {isVerified ? (
+                        <Badge className="bg-green-100 text-green-800">Verificado</Badge>
+                      ) : (
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={handleSendVerificationEmail}
+                        >
+                          Verificar Email
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Autenticación de Dos Factores */}
+                  <div className="pt-4 border-t" id="2fa-section">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className={`font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                          Autenticación de Dos Factores
+                        </p>
+                        <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                          Añade una capa extra de seguridad a tu cuenta
+                        </p>
+                      </div>
+                      <Switch
+                        checked={twoFactorEnabled}
+                        onCheckedChange={toggleTwoFactor}
+                      />
+                    </div>
+                  </div>
+                  
+                  {/* Privacidad */}
+                  <div className="pt-4 border-t" id="privacy-section">
+                    <div className="flex items-center justify-between mb-2">
+                      <div>
+                        <p className={`font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                          Política de Privacidad
+                        </p>
+                        <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                          Revisa nuestra política de privacidad
+                        </p>
+                      </div>
+                      <Button 
+                        variant="link" 
+                        className={darkMode ? 'text-blue-400' : 'text-blue-600'}
+                        onClick={() => window.open('/privacy', '_blank')}
+                      >
+                        Ver Política
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className={darkMode ? 'bg-gray-800 border-gray-700' : ''} id="settings-notifications">
                 <CardHeader>
                   <CardTitle className={`flex items-center space-x-2 ${darkMode ? 'text-white' : ''}`}>
                     <Bell className="w-5 h-5" />
@@ -504,7 +839,7 @@ const Settings = () => {
                 </CardContent>
               </Card>
 
-              <Card className={darkMode ? 'bg-gray-800 border-gray-700' : ''}>
+              <Card className={darkMode ? 'bg-gray-800 border-gray-700' : ''} id="settings-theme">
                 <CardHeader>
                   <CardTitle className={`flex items-center space-x-2 ${darkMode ? 'text-white' : ''}`}>
                     <Palette className="w-5 h-5" />

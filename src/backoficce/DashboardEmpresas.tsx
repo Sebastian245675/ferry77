@@ -1,0 +1,2578 @@
+import React, { useEffect, useState } from "react";
+import { collection, getDocs, query, where, doc, updateDoc, getDoc, serverTimestamp, addDoc } from "firebase/firestore";
+import { DeliveryStatus } from "../lib/models";
+import { db } from "../lib/firebase";
+import { getAuth } from "firebase/auth";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  FileText,
+  MessageSquare,
+  Star,
+  Clock,
+  Users,
+  Euro,
+  ShieldCheck,
+  AlertCircle,
+  CheckCircle,
+  ArrowRight,
+  TruckIcon,
+  Package,
+  User,
+  DollarSign,
+  Truck,
+  MapPin,
+  Building2,
+  X,
+  Check,
+  Calendar,
+  Info
+} from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import DashboardLayout from "@/components/barraempresa";
+
+interface CompanyData {
+  id?: string;
+  name?: string;
+  companyName?: string;
+  isVerified?: boolean;
+  profileImage?: string;
+  photoURL?: string;
+  userId?: string;
+  ubicacion?: any;
+  location?: any;
+  uid?: string;
+  [key: string]: any;
+}
+
+interface Quote {
+  id: string;
+  title?: string;
+  requestTitle?: string;
+  clientName?: string;
+  userId?: string;
+  totalAmount?: number;
+  deliveryTime?: string;
+  deliveryStatus?: string;
+  status?: string;
+  estadoEmpresa?: string;
+  createdAt?: string | number;
+  category?: string;
+  urgency?: string;
+  selectedCompanies?: any[];
+  source?: string;
+  comments?: Comment[];
+  companyId?: string;
+  companyName?: string;
+  products?: Product[];
+  items?: Product[] | any[]; // Para compatibilidad con diferentes formatos
+  deliveryId?: string; // ID de la entrega asociada
+  driverId?: string; // ID del repartidor asignado
+  interestedDrivers?: any[]; // Lista de repartidores interesados
+  amount?: number; // Para compatibilidad con totalAmount
+  total?: number; // Otra forma de expresar el monto
+  [key: string]: any; // Para capturar cualquier otro campo
+}
+
+interface Product {
+  id?: string;
+  name: string;
+  image?: string;
+  imageUrl?: string; // Alternativa a image
+  img?: string; // Otra alternativa común
+  photo?: string; // Otra posible alternativa
+  photoUrl?: string; // Otra posible alternativa
+  quantity?: number;
+  cantidad?: number; // Alternativa en español
+  price?: number | string;
+  precio?: number | string; // Alternativa en español
+  unitPrice?: number | string; // Otra posible forma de precio
+  description?: string;
+  descripcion?: string; // Alternativa en español
+  specifications?: string; // Usado en algunas partes
+  [key: string]: any; // Para capturar cualquier otro campo
+}
+
+// Función auxiliar para calcular el total de productos
+function calculateTotal(items: any[]): number {
+  if (!items || !Array.isArray(items) || items.length === 0) return 0;
+  
+  let total = 0;
+  for (const item of items) {
+    if (!item) continue; // Saltamos items undefined o null
+    
+    let price = 0;
+    // Intentamos extraer el precio de diversas formas
+    if (typeof item.price === 'number') price = item.price;
+    else if (typeof item.price === 'string') price = parseFloat(item.price) || 0;
+    else if (typeof item.precio === 'number') price = item.precio;
+    else if (typeof item.precio === 'string') price = parseFloat(item.precio) || 0;
+    else if (item.unitPrice) price = typeof item.unitPrice === 'number' ? item.unitPrice : parseFloat(item.unitPrice) || 0;
+    
+    // Verificamos que el precio sea válido
+    if (isNaN(price)) price = 0;
+    
+    // Obtenemos la cantidad
+    const quantity = item.quantity || item.cantidad || 1;
+    
+    // Sumamos al total
+    total += price * quantity;
+  }
+  return total;
+}
+
+interface Comment {
+  id: string;
+  requestId?: string;
+  userId: string;
+  text: string;
+  createdAt: string;
+}
+const DashboardEmpresas: React.FC = () => {
+  const auth = getAuth();
+  const user = auth.currentUser;
+  const [company, setCompany] = useState<{ 
+    name: string; 
+    isVerified: boolean; 
+    profileImage: string; 
+    userId: string;
+    hasLocation: boolean;
+    ubicacion: any;
+  }>({
+    name: '',
+    isVerified: false,
+    profileImage: '',
+    userId: '',
+    hasLocation: false,
+    ubicacion: null
+  });
+
+  useEffect(() => {
+    const fetchCompany = async () => {
+      if (!user) return;
+      
+      try {
+        const companyData: CompanyData = await getCompanyData(user.uid);
+        console.log("Datos de la empresa obtenidos:", companyData);
+        
+        if (companyData) {
+          setCompany({
+            name: companyData.name || companyData.companyName || user.displayName || '',
+            isVerified: companyData.isVerified || false,
+            profileImage: companyData.profileImage || companyData.photoURL || '',
+            userId: user.uid,
+            hasLocation: Boolean(companyData.ubicacion || companyData.location),
+            ubicacion: companyData.ubicacion || companyData.location || null
+          });
+        }
+      } catch (error) {
+        console.error("Error al obtener datos de la empresa:", error);
+      }
+    };
+    
+    fetchCompany();
+  }, [user]);
+
+  const navigate = useNavigate();
+  
+  // Estado para mostrar todos los pedidos activos o solo los más recientes
+  const [showAllActiveOrders, setShowAllActiveOrders] = useState(false);
+  const [showAllCompletedOrders, setShowAllCompletedOrders] = useState(false);
+  const [showAllPendingQuotes, setShowAllPendingQuotes] = useState(false);
+  const [realQuotes, setRealQuotes] = useState<Quote[]>([]);
+  const [myQuotes, setMyQuotes] = useState<Quote[]>([]);
+  const [acceptedQuotes, setAcceptedQuotes] = useState<Quote[]>([]);
+  const [pendingQuotes, setPendingQuotes] = useState<Quote[]>([]);
+  const [completedQuotes, setCompletedQuotes] = useState<Quote[]>([]);
+  const [completedJobs, setCompletedJobs] = useState(0);
+  const [isProcessing, setIsProcessing] = useState(false); // Estado para controlar los botones durante el procesamiento
+
+  // Estadísticas para las tarjetas
+  const stats = [
+    {
+      title: "Solicitudes Pendientes",
+      value: pendingQuotes?.length || 0,
+      bgColor: "bg-yellow-100",
+      color: "text-yellow-700",
+      icon: Clock,
+      trend: "+5% esta semana"
+    },
+    {
+      title: "Cotizaciones Aceptadas",
+      value: acceptedQuotes?.length || 0,
+      bgColor: "bg-green-100",
+      color: "text-green-700",
+      icon: CheckCircle,
+      trend: "+12% este mes"
+    },
+    {
+      title: "Trabajos Completados",
+      value: completedQuotes?.length || 0,
+      bgColor: "bg-blue-100",
+      color: "text-blue-700",
+      icon: Package,
+      trend: "↑ 3 nuevos"
+    },
+    {
+      title: "Clientes Atendidos",
+      value: acceptedQuotes?.length > 0 ? [...new Set(acceptedQuotes.map(q => q.userId))].length : 0,
+      bgColor: "bg-purple-100",
+      color: "text-purple-700",
+      icon: Users,
+      trend: "Fidelización 85%"
+    },
+  ];
+
+  // Hook para obtener y guardar la empresa real
+  const getCompanyData = async (userId: string) => {
+    // Buscar SIEMPRE en users primero para obtener companyName real
+    // Probamos varias consultas para cubrir diferentes estructuras
+    let userQueries = [
+      query(collection(db, "users"), where("uid", "==", userId)),
+      query(collection(db, "users"), where("userId", "==", userId)),
+      query(collection(db, "users"), where("id", "==", userId))
+    ];
+
+    for (const q of userQueries) {
+      const querySnapshot = await getDocs(q);
+      if (!querySnapshot.empty) {
+        const userData = querySnapshot.docs[0].data();
+        console.log("Datos de usuario encontrados:", userData);
+        return {
+          ...userData,
+          id: querySnapshot.docs[0].id
+        };
+      }
+    }
+
+    // Si no se encuentra en users, intentamos en companies
+    let companyQueries = [
+      query(collection(db, "companies"), where("uid", "==", userId)),
+      query(collection(db, "companies"), where("userId", "==", userId)),
+      query(collection(db, "companies"), where("id", "==", userId))
+    ];
+
+    for (const q of companyQueries) {
+      const querySnapshot = await getDocs(q);
+      if (!querySnapshot.empty) {
+        const companyData = querySnapshot.docs[0].data();
+        console.log("Datos de compañía encontrados:", companyData);
+        return {
+          ...companyData,
+          id: querySnapshot.docs[0].id
+        };
+      }
+    }
+
+    console.warn("No se encontraron datos para el usuario:", userId);
+    return null;
+  };
+  
+  // Función para cargar solicitudes - accesible desde cualquier parte del componente
+  const loadQuotes = async () => {
+    try {
+      const auth = getAuth();
+      const user = auth.currentUser;
+      if (!user) return;
+
+      console.log("Cargando solicitudes para el usuario:", user.uid, user.displayName);
+
+      // Obtener TODAS las solicitudes, excluyendo las que están marcadas como entregadas
+      const q = query(
+        collection(db, "solicitud"),
+        where("status", "not-in", ["entregado"])
+      );
+      const querySnapshot = await getDocs(q);
+      const allQuotes = querySnapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      })) as Quote[];
+
+      // Cargar información adicional de repartidores interesados para pedidos pendientes
+      const quotesWithDriverInfo = await Promise.all(
+        allQuotes.map(async (quote) => {
+          // Si el pedido tiene un ID de entrega y está en estado pendingDriver, buscar repartidores interesados
+          if (quote.deliveryId && (quote.deliveryStatus === 'pendingDriver' || quote.status === 'pendingDriver')) {
+            try {
+              const deliveryRef = doc(db, "deliveries", quote.deliveryId);
+              const deliverySnap = await getDoc(deliveryRef);
+              
+              if (deliverySnap.exists()) {
+                const deliveryData = deliverySnap.data();
+                // Si hay repartidores interesados, obtener sus datos
+                if (deliveryData.interestedDrivers && Array.isArray(deliveryData.interestedDrivers) && deliveryData.interestedDrivers.length > 0) {
+                  // Cargar información de cada repartidor
+                  const driversInfo = await Promise.all(
+                    deliveryData.interestedDrivers.map(async (driverId: string) => {
+                      const driverRef = doc(db, "users", driverId);
+                      const driverSnap = await getDoc(driverRef);
+                      
+                      if (driverSnap.exists()) {
+                        const driverData = driverSnap.data();
+                        return {
+                          id: driverId,
+                          name: driverData.name || driverData.displayName || "Repartidor",
+                          phone: driverData.phone || driverData.phoneNumber || "",
+                          rating: driverData.rating || 0,
+                          photo: driverData.photoURL || driverData.profileImage || ""
+                        };
+                      }
+                      return {
+                        id: driverId,
+                        name: "Repartidor",
+                        phone: "",
+                        rating: 0,
+                        photo: ""
+                      };
+                    })
+                  );
+                  
+                  // Añadir información de los repartidores al pedido
+                  return {
+                    ...quote,
+                    interestedDrivers: driversInfo
+                  };
+                }
+              }
+            } catch (error) {
+              console.error(`Error al cargar información de repartidores para pedido ${quote.id}:`, error);
+            }
+          }
+          
+          return quote;
+        })
+      );
+
+      console.log("Total de solicitudes encontradas:", quotesWithDriverInfo.length);
+
+      // Mostrar todas las solicitudes para debugging
+      console.log("Todas las solicitudes:", quotesWithDriverInfo.map(quote => ({
+        id: quote.id,
+        title: quote.title || quote.requestTitle,
+        status: quote.status,
+        deliveryStatus: quote.deliveryStatus,
+        selectedCompanies: quote.selectedCompanies,
+        products: quote.products?.length || 0,
+        items: quote.items?.length || 0,
+        interestedDrivers: quote.interestedDrivers?.length || 0
+      })));
+
+      // Depuración: Mostrar los pedidos que tienen deliveryId pero no les aparece la opción de publicar
+      console.log("Pedidos con deliveryId:", quotesWithDriverInfo
+        .filter(q => q.deliveryId)
+        .map(q => ({
+          id: q.id,
+          title: q.title || q.requestTitle,
+          status: q.status,
+          deliveryStatus: q.deliveryStatus,
+          estadoEmpresa: q.estadoEmpresa,
+          deliveryId: q.deliveryId,
+          isPublished: q.isPublished || q.published,
+          driverId: q.driverId
+        }))
+      );
+      
+      // Depuración especial para identificar pedidos que necesitan botón de publicación
+      console.log("PEDIDOS QUE NECESITAN BOTÓN DE PUBLICAR VIAJE:", quotesWithDriverInfo
+        .filter(q => q.deliveryId && !q.driverId && (!q.isPublished && !q.published))
+        .map(q => ({
+          id: q.id,
+          title: q.title || q.requestTitle || "Sin título",
+          status: q.status || "Sin estado",
+          deliveryStatus: q.deliveryStatus || "Sin estado de entrega",
+          deliveryId: q.deliveryId,
+          hasDeliveryId: !!q.deliveryId,
+          hasDriver: !!q.driverId,
+          isPublished: !!(q.isPublished || q.published),
+          shouldShowButton: !!(q.deliveryId && !q.driverId && (!q.isPublished && !q.published))
+        }))
+      );
+
+      // Filtrar para mostrar solo las solicitudes donde esta empresa esté seleccionada
+      // y que NO estén confirmadas ni denegadas (solo las pendientes)
+      const filteredPendingQuotes = quotesWithDriverInfo.filter(quote => {
+        // Si no hay empresas seleccionadas, verificar otros campos para backward compatibility
+        if (!quote.selectedCompanies || !Array.isArray(quote.selectedCompanies) || quote.selectedCompanies.length === 0) {
+          // Verificar si hay otros campos que puedan vincular esta solicitud con la empresa actual
+          const hasCompanyReference = 
+            quote.companyId === user.uid || 
+            quote.companyName === user.displayName ||
+            quote.userId === user.uid;
+          
+          if (hasCompanyReference) {
+            console.log(`Solicitud ${quote.id} asociada a la empresa por campos alternativos`);
+            return quote.status !== "confirmado" && quote.status !== "denegado";
+          }
+          
+          return false;
+        }
+        
+        // Verificar si esta empresa está en la lista de empresas seleccionadas
+        const isSelected = quote.selectedCompanies.some(company => {
+          if (typeof company === 'string') {
+            return company === user.uid;
+          }
+          
+          if (typeof company === 'object') {
+            return (
+              company.id === user.uid || 
+              company.companyId === user.uid ||
+              // También verificar por nombre si el ID no coincide
+              (user.displayName && (
+                company.companyName === user.displayName ||
+                company.name === user.displayName
+              ))
+            );
+          }
+          
+          return false;
+        });
+        
+        if (isSelected) {
+          console.log(`Solicitud ${quote.id} seleccionada para la empresa actual`);
+        }
+        
+        // Solo incluir si está seleccionada Y no está confirmada/denegada
+        return isSelected && quote.status !== "confirmado" && quote.status !== "denegado";
+      });
+
+      console.log("Solicitudes pendientes filtradas para la empresa:", filteredPendingQuotes.length);
+      
+      // Ordenar por fecha más reciente primero
+      filteredPendingQuotes.sort((a, b) => {
+        const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return dateB - dateA;
+      });
+      
+      setRealQuotes(filteredPendingQuotes);
+      setPendingQuotes(filteredPendingQuotes);
+    } catch (error) {
+      console.error("Error al cargar solicitudes:", error);
+    }
+  };
+  
+  // Función para obtener el nombre de la empresa del pedido
+  const getCompanyName = (quote: Quote) => {
+    // Si no hay empresas seleccionadas
+    if (!quote.selectedCompanies || !Array.isArray(quote.selectedCompanies) || quote.selectedCompanies.length === 0) {
+      return "No especificada";
+    }
+    
+    const auth = getAuth();
+    const user = auth.currentUser;
+    if (!user) return "No especificada";
+    
+    // Buscar la empresa que coincide con el usuario actual
+    const selectedCompany = quote.selectedCompanies.find(company => {
+      if (typeof company === 'string') {
+        return company === user.uid;
+      }
+      
+      if (typeof company === 'object') {
+        return (
+          company.id === user.uid || 
+          company.companyId === user.uid ||
+          // También verificar por nombre si el ID no coincide
+          (user.displayName && (
+            company.companyName === user.displayName ||
+            company.name === user.displayName
+          ))
+        );
+      }
+      
+      return false;
+    });
+    
+    // Si no encontramos la empresa específica, usar la primera disponible
+    const companyToUse = selectedCompany || quote.selectedCompanies[0];
+    
+    if (typeof companyToUse === 'string') {
+      return companyToUse; // Si es un string, devolver directamente
+    }
+    
+    if (companyToUse && typeof companyToUse === 'object') {
+      // Intentar obtener el nombre de la empresa con fallbacks
+      return companyToUse.companyName || 
+             companyToUse.name || 
+             companyToUse.nombreEmpresa || 
+             companyToUse.empresa || 
+             "Esta empresa";
+    }
+    
+    return "No especificada";
+  };
+
+  // Función para determinar el color del badge según el estado de entrega
+  const getDeliveryStatusColor = (status: string) => {
+    switch (status) {
+      case 'pendiente':
+        return 'bg-yellow-100 text-yellow-800';
+      case 'enviado':
+        return 'bg-blue-100 text-blue-800';
+      case 'en_camino':
+        return 'bg-purple-100 text-purple-800';
+      case 'entregado':
+        return 'bg-green-100 text-green-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  // Función para obtener el icono según el estado de entrega
+  const getDeliveryStatusIcon = (status: string) => {
+    switch (status) {
+      case 'pendiente':
+        return <Clock className="h-3 w-3" />;
+      case 'enviado':
+        return <Package className="h-3 w-3" />;
+      case 'en_camino':
+        return <TruckIcon className="h-3 w-3" />;
+      case 'entregado':
+        return <CheckCircle className="h-3 w-3" />;
+      default:
+        return <Clock className="h-3 w-3" />;
+    }
+  };
+  
+  // Función para obtener resumen de estados
+  const getStatusSummary = () => {
+    const pendingCount = pendingQuotes?.length || 0;
+    const activeCount = acceptedQuotes?.filter(q => 
+      q.deliveryStatus !== 'entregado' && q.status !== 'entregado'
+    )?.length || 0;
+    const completedCount = acceptedQuotes?.filter(q => 
+      q.deliveryStatus === 'entregado' || q.status === 'entregado'
+    )?.length || 0;
+    
+    return { pending: pendingCount, active: activeCount, completed: completedCount };
+  };
+
+  // Cargar solicitudes cuando el componente se monta
+  useEffect(() => {
+    console.log("==========================================");
+    console.log("INICIANDO CARGA DE SOLICITUDES Y PEDIDOS");
+    console.log("==========================================");
+    loadQuotes();
+  }, []);
+
+  useEffect(() => {
+    const fetchMyQuotes = async () => {
+      try {
+        const auth = getAuth();
+        const user = auth.currentUser;
+        if (!user) return;
+
+        // 1. Consultamos cotizaciones tradicionales
+        const q = query(collection(db, "cotizaciones")); 
+        const snapshot = await getDocs(q);
+        const cotizacionesData = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+          source: "cotizaciones"
+        })) as Quote[];
+
+        // 2. Consultamos solicitudes confirmadas (incluyendo pedidos entregados)
+        const qSolicitudes = query(
+          collection(db, "solicitud"),
+          where("status", "in", ["confirmado", "entregado"])
+        );
+        const snapshotSolicitudes = await getDocs(qSolicitudes);
+        const solicitudesConfirmadas = snapshotSolicitudes.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+          deliveryStatus: doc.data().deliveryStatus ?? "pendiente",
+          source: "solicitud"
+        })) as Quote[];
+
+        // Función para saber si la solicitud/cotización es de la empresa logueada
+        const isForCurrentCompany = (quote: Quote) => {
+          // Si tiene selectedCompanies, verificar que incluya al usuario actual
+          if (quote.selectedCompanies && Array.isArray(quote.selectedCompanies)) {
+            return quote.selectedCompanies.some(company => {
+              if (typeof company === 'string') {
+                return company === user.uid;
+              }
+              
+              if (typeof company === 'object') {
+                return (
+                  company.id === user.uid || 
+                  company.companyId === user.uid ||
+                  (user.displayName && (
+                    company.companyName === user.displayName ||
+                    company.name === user.displayName
+                  ))
+                );
+              }
+              
+              return false;
+            });
+          }
+          
+          // Verificar campos adicionales
+          return (
+            quote.userId === user.uid ||
+            quote.companyId === user.uid ||
+            quote.companyName === user.displayName
+          );
+        };
+
+        // Filtrar solo las cotizaciones y solicitudes de la empresa logueada
+        const filteredCotizaciones = cotizacionesData.filter(isForCurrentCompany);
+        const filteredSolicitudes = solicitudesConfirmadas.filter(isForCurrentCompany);
+        
+        // Combinar datos
+        const allData = [...filteredCotizaciones, ...filteredSolicitudes];
+        console.log("Cotizaciones y solicitudes filtradas:", allData.length);
+        setMyQuotes(allData);
+
+        // Filtrar solo pedidos activos (no entregados) de la empresa logueada
+        const active = allData.filter(quote => {
+          // Excluir pedidos completados/entregados
+          if (quote.deliveryStatus === "entregado" || quote.status === "entregado") {
+            return false;
+          }
+          
+          // Incluir pedidos activos con cualquier estado excepto entregado/denegado
+          // También excluir los que no tienen id (por si acaso)
+          if (!quote.id) {
+            return false;
+          }
+          
+          // Logs de diagnóstico para cada pedido activo
+          console.log(`Analizando pedido activo ${quote.id}:`, {
+            title: quote.title || quote.requestTitle,
+            deliveryId: quote.deliveryId || "NO TIENE",
+            driverId: quote.driverId || "NO ASIGNADO",
+            isPublished: quote.isPublished || quote.published || false,
+            status: quote.status,
+            deliveryStatus: quote.deliveryStatus,
+            products: quote.products ? quote.products.map(p => p.name) : [],
+            items: quote.items ? quote.items.map(i => i.name) : []
+          });
+          
+          // Incluir todos los pedidos confirmados o en proceso
+          return (
+            quote.status === "accepted" ||
+            quote.status === "confirmado" ||
+            quote.status === "recibida" ||
+            quote.status === "pendiente" ||
+            quote.status === "pendingDriver" || 
+            quote.status === "enviado" ||
+            quote.status === "en_camino" ||
+            quote.deliveryStatus === "pendiente" ||
+            quote.deliveryStatus === "pendingDriver" ||
+            quote.deliveryStatus === "enviado" ||
+            quote.deliveryStatus === "en_camino" ||
+            quote.estadoEmpresa === "en_espera"
+          );
+        });
+        console.log("Pedidos activos:", active.length);
+        setAcceptedQuotes(active);
+        
+        // Filtrar solo pedidos completados de la empresa logueada
+        const completed = allData.filter(quote => 
+          quote.deliveryStatus === "entregado" || quote.status === "entregado"
+        );
+        console.log("Pedidos completados:", completed.length);
+        setCompletedQuotes(completed);
+        setCompletedJobs(completed.length);
+      } catch (error) {
+        console.error("Error al obtener cotizaciones:", error);
+      }
+    };
+
+    fetchMyQuotes();
+  }, []);
+
+  // Nuevo useEffect para cargar comentarios
+  useEffect(() => {
+    const fetchComments = async () => {
+      try {
+        if (!company || !company.userId) return;
+        
+        const q = query(
+          collection(db, "comments"),
+          where("userId", "==", company.userId || "")
+        );
+        const querySnapshot = await getDocs(q);
+        const commentsData: Comment[] = querySnapshot.docs.map((doc) => ({
+          id: doc.id,
+          requestId: doc.data().requestId || "",
+          userId: doc.data().userId || "",
+          text: doc.data().text || "",
+          createdAt: doc.data().createdAt || new Date().toISOString(),
+        }));
+
+        setRealQuotes((prevQuotes) =>
+          prevQuotes.map((quote) => ({
+            ...quote,
+            comments: commentsData.filter((comment) => comment.requestId === quote.id),
+          }))
+        );
+      } catch (error) {
+        console.error("Error fetching comments:", error);
+      }
+    };
+
+    fetchComments();
+  }, [company]);
+  
+  // Función para confirmar una solicitud
+  const handleConfirmQuote = async (quoteId: string): Promise<string | null> => {
+    if (isProcessing) return null;
+    
+    try {
+      setIsProcessing(true);
+      console.log(`[handleConfirmQuote] Intentando confirmar solicitud ${quoteId}...`);
+      
+      const quoteRef = doc(db, "solicitud", quoteId);
+      const quoteSnap = await getDoc(quoteRef);
+      
+      if (!quoteSnap.exists()) {
+        throw new Error("La solicitud no existe");
+      }
+      
+      const quoteData = quoteSnap.data();
+      const auth = getAuth();
+      const user = auth.currentUser;
+      
+      if (!user) {
+        throw new Error("Usuario no autenticado");
+      }
+      
+      // Verificar si ya tiene deliveryId para no duplicar
+      if (quoteData.deliveryId) {
+        console.log(`[handleConfirmQuote] La solicitud ya tiene un deliveryId: ${quoteData.deliveryId}`);
+        return quoteData.deliveryId;
+      }
+      
+      // Actualizar el estado de la solicitud a "confirmado" y pendiente para repartidor
+      await updateDoc(quoteRef, {
+        status: "confirmado",
+        estadoEmpresa: "en_espera",
+        deliveryStatus: "pendingDriver" // Estado de entrega pendiente para repartidor
+      });
+      
+      // Crear un registro en la colección de entregas para que los repartidores puedan verlo
+      const deliveryData: any = {
+        orderId: quoteId,
+        companyId: user.uid,
+        companyName: company.name || "Empresa",
+        userId: quoteData.userId || "cliente",
+        clientName: quoteData.clientName || quoteData.userId || "Cliente",
+        items: quoteData.products || quoteData.items || [],
+        totalAmount: Number(quoteData.totalAmount || quoteData.amount || quoteData.total || 0),
+        status: "pendingDriver" as DeliveryStatus,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        deliveryAddress: quoteData.deliveryAddress || quoteData.address || "",
+        deliveryFee: Number(quoteData.deliveryFee || 0),
+        interestedDrivers: [], // Lista de repartidores que se han interesado en tomar el pedido
+        isPublished: true,
+        published: true,
+        publicationStatus: "active",
+        visibility: "public",
+        availableForDrivers: true
+      };
+      
+      // Solo añadir deliveryCoordinates si existe y no es undefined
+      // Importante: Firestore no acepta valores undefined
+      console.log("[handleConfirmQuote] Revisando coordenadas disponibles:", {
+        deliveryCoordinates: quoteData.deliveryCoordinates,
+        coordinates: quoteData.coordinates
+      });
+      
+      if (quoteData.deliveryCoordinates && typeof quoteData.deliveryCoordinates === 'object') {
+        deliveryData.deliveryCoordinates = quoteData.deliveryCoordinates;
+        console.log("[handleConfirmQuote] Usando deliveryCoordinates existentes");
+      } else if (quoteData.coordinates && typeof quoteData.coordinates === 'object') {
+        deliveryData.deliveryCoordinates = quoteData.coordinates;
+        console.log("[handleConfirmQuote] Usando coordinates alternativas");
+      } else {
+        // Si no hay coordenadas válidas, usar valor nulo en lugar de undefined
+        console.log("[handleConfirmQuote] No se encontraron coordenadas válidas para la entrega, usando null");
+        // Usar null en lugar de undefined, ya que Firestore acepta null pero no undefined
+        deliveryData.deliveryCoordinates = null;
+      }
+      
+      // Asegurar que la entrega sea visible para los repartidores
+      deliveryData.availableForDrivers = true;
+      deliveryData.visibility = "public";
+      deliveryData.isPublished = true;
+      deliveryData.published = true;
+      deliveryData.publicationStatus = "active";
+      deliveryData.driverStatus = "available";
+      deliveryData.searchable = true;
+      deliveryData.visibleInFeed = true;
+      deliveryData.region = "all";
+      deliveryData.readyForAssignment = true;
+      
+      // Guardar en la colección de deliveries
+      try {
+        const deliveryRef = await addDoc(collection(db, "deliveries"), deliveryData);
+        console.log(`[handleConfirmQuote] ✅ Entrega creada para repartidores con ID: ${deliveryRef.id}`);
+        
+        // Actualizar la solicitud con la referencia a la entrega
+        await updateDoc(quoteRef, {
+          deliveryId: deliveryRef.id
+        });
+        
+        // Añadir un comentario para notificar al cliente
+        const newComment = {
+          id: Date.now().toString(),
+          text: `¡Buenas noticias! Su solicitud ha sido aprobada por ${company.name}. Estamos buscando un repartidor disponible para su entrega. Le notificaremos cuando se asigne uno.`,
+          userId: user.uid,
+          userName: company.name || user.displayName || "Empresa",
+          createdAt: new Date().toISOString(),
+          isSystem: true
+        };
+        
+        // Obtener los comentarios existentes o inicializar un array vacío
+        const existingComments = quoteData.comments || [];
+        
+        // Añadir el nuevo comentario
+        await updateDoc(quoteRef, {
+          comments: [...existingComments, newComment]
+        });
+        
+        console.log(`[handleConfirmQuote] ✅ Solicitud ${quoteId} confirmada exitosamente en Firestore`);
+        console.log(`[handleConfirmQuote] ✅ Notificación enviada al cliente`);
+        
+        // Actualizar el estado local inmediatamente para feedback instantáneo
+        setRealQuotes(prevQuotes => {
+          const updated = prevQuotes.map(quote => 
+            quote.id === quoteId 
+              ? { 
+                  ...quote, 
+                  status: "confirmado", 
+                  estadoEmpresa: "en_espera",
+                  deliveryStatus: "pendingDriver",
+                  deliveryId: deliveryRef.id,
+                  comments: [...(quote.comments || []), newComment]
+                } 
+              : quote
+          );
+          console.log("[handleConfirmQuote] Estado local actualizado:", updated.find(q => q.id === quoteId));
+          return updated;
+        });
+        
+        // También actualizar acceptedQuotes si el pedido está ahí
+        setAcceptedQuotes(prevQuotes => {
+          return prevQuotes.map(quote => 
+            quote.id === quoteId 
+              ? { 
+                  ...quote, 
+                  status: "confirmado", 
+                  estadoEmpresa: "en_espera",
+                  deliveryStatus: "pendingDriver",
+                  deliveryId: deliveryRef.id,
+                } 
+              : quote
+          );
+        });
+        
+        // Recargar todos los datos para asegurarnos de que todo está sincronizado
+        setTimeout(() => {
+          console.log("[handleConfirmQuote] Recargando datos...");
+          loadQuotes();
+        }, 1000);
+        
+        return deliveryRef.id;
+      } catch (dbError) {
+        console.error("[handleConfirmQuote] Error al crear el registro de entrega:", dbError);
+        throw new Error(`Error al crear el registro de entrega: ${dbError.message}`);
+      }
+    } catch (error) {
+      console.error("Error al confirmar la solicitud:", error);
+      alert("Error al confirmar la solicitud: " + error.message);
+      return null;
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+  
+  // Función para asignar un repartidor a un pedido
+  const handleAssignDriver = async (quoteId: string, driverId: string, deliveryId: string) => {
+    if (isProcessing) return;
+    
+    try {
+      setIsProcessing(true);
+      console.log(`[handleAssignDriver] Asignando repartidor ${driverId} al pedido ${quoteId}...`);
+      
+      // Actualizar el documento de entrega
+      const deliveryRef = doc(db, "deliveries", deliveryId);
+      await updateDoc(deliveryRef, {
+        status: "driverAssigned",
+        driverId: driverId,
+        assignedAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+      
+      // Actualizar la solicitud original
+      const quoteRef = doc(db, "solicitud", quoteId);
+      await updateDoc(quoteRef, {
+        deliveryStatus: "driverAssigned",
+        driverId: driverId,
+        assignedAt: serverTimestamp()
+      });
+      
+      // Obtener información del repartidor
+      const driverRef = doc(db, "users", driverId);
+      const driverSnap = await getDoc(driverRef);
+      const driverData = driverSnap.exists() ? driverSnap.data() : null;
+      
+      // Añadir un comentario para notificar al cliente
+      if (driverData) {
+        const quoteSnap = await getDoc(quoteRef);
+        if (quoteSnap.exists()) {
+          const quoteData = quoteSnap.data();
+          const existingComments = quoteData.comments || [];
+          
+          const newComment = {
+            id: Date.now().toString(),
+            text: `Se ha asignado un repartidor para su pedido: ${driverData.name || "Repartidor"}. Puede seguir el estado de su entrega en tiempo real.`,
+            userId: driverId,
+            userName: "Sistema",
+            createdAt: new Date().toISOString(),
+            isSystem: true
+          };
+          
+          await updateDoc(quoteRef, {
+            comments: [...existingComments, newComment]
+          });
+        }
+      }
+      
+      // Actualizar el estado local
+      setRealQuotes(prevQuotes => {
+        const updated = prevQuotes.map(quote => 
+          quote.id === quoteId 
+            ? { 
+                ...quote, 
+                deliveryStatus: "driverAssigned",
+                driverId: driverId
+              } 
+            : quote
+        );
+        return updated;
+      });
+      
+      // Mostrar alerta de éxito
+      alert("Repartidor asignado exitosamente. El cliente ha sido notificado.");
+      
+      // Recargar datos
+      setTimeout(() => {
+        loadQuotes();
+      }, 1000);
+      
+    } catch (error) {
+      console.error("Error al asignar repartidor:", error);
+      alert("Error al asignar repartidor. Por favor, inténtelo de nuevo.");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+  
+  // Función para publicar un viaje para que los repartidores lo vean
+  const handlePublishDelivery = async (quoteId: string, deliveryId?: string) => {
+    if (isProcessing) return;
+    
+    try {
+      setIsProcessing(true);
+      console.log(`[handlePublishDelivery] Publicando viaje para el pedido ${quoteId}...`);
+      
+      // Verificar que el usuario esté autenticado
+      const auth = getAuth();
+      const currentUser = auth.currentUser;
+      
+      if (!currentUser) {
+        throw new Error("Usuario no autenticado. Por favor, inicie sesión nuevamente.");
+      }
+      
+      // Si no hay deliveryId, primero creamos uno
+      if (!deliveryId) {
+        console.log(`[handlePublishDelivery] No hay deliveryId para el pedido ${quoteId}, se creará uno`);
+        
+        try {
+          // Obtener datos del pedido - verificamos que colección usar
+          let quoteRef;
+          let quoteSnap;
+          let quoteData;
+          
+          // Primero intentamos en 'solicitud'
+          quoteRef = doc(db, "solicitud", quoteId);
+          quoteSnap = await getDoc(quoteRef);
+          
+          if (!quoteSnap.exists()) {
+            // Si no existe en 'solicitud', intentamos en 'cotizaciones'
+            quoteRef = doc(db, "cotizaciones", quoteId);
+            quoteSnap = await getDoc(quoteRef);
+            
+            if (!quoteSnap.exists()) {
+              throw new Error("No se encontró la solicitud en ninguna colección");
+            }
+          }
+          
+          quoteData = quoteSnap.data();
+          console.log(`[handlePublishDelivery] Datos del pedido encontrados:`, quoteData);
+          
+          // Verificamos que tenemos todos los datos necesarios
+          const companyId = currentUser.uid || company.userId;
+          if (!companyId) {
+            throw new Error("No se pudo determinar el ID de la empresa");
+          }
+          
+          // Crear registro en la colección de entregas con validación de datos
+          const deliveryData: any = {
+            orderId: quoteId,
+            companyId: companyId,
+            companyName: company.name || "Empresa",
+            userId: quoteData.userId || quoteData.clientId || "Cliente",
+            clientName: quoteData.clientName || quoteData.userName || quoteData.userId || "Cliente",
+            items: quoteData.products || quoteData.items || [],
+            totalAmount: Number(quoteData.totalAmount || quoteData.amount || quoteData.total || 0),
+            status: "pendingDriver" as DeliveryStatus,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+            deliveryAddress: quoteData.deliveryAddress || quoteData.address || "",
+            deliveryFee: Number(quoteData.deliveryFee || 0),
+            interestedDrivers: [], // Lista vacía de repartidores interesados
+            isPublished: true, // Ya lo marcamos como publicado desde el inicio
+            published: true,
+            publicationStatus: "active",
+            visibility: "public",
+            availableForDrivers: true
+          };
+          
+          // Solo añadir deliveryCoordinates si existe y no es undefined
+          // Importante: Firestore no acepta valores undefined
+          console.log("[handlePublishDelivery] Verificando coordenadas:", quoteData.deliveryCoordinates, quoteData.coordinates);
+          
+          if (quoteData.deliveryCoordinates && typeof quoteData.deliveryCoordinates === 'object') {
+            deliveryData.deliveryCoordinates = quoteData.deliveryCoordinates;
+            console.log("[handlePublishDelivery] Usando deliveryCoordinates existentes");
+          } else if (quoteData.coordinates && typeof quoteData.coordinates === 'object') {
+            deliveryData.deliveryCoordinates = quoteData.coordinates;
+            console.log("[handlePublishDelivery] Usando coordinates alternativas");
+          } else {
+          // Si no hay coordenadas válidas, usar valor nulo en lugar de undefined
+          console.log("[handlePublishDelivery] No se encontraron coordenadas válidas para la entrega, usando null");
+          deliveryData.deliveryCoordinates = null;
+        }
+        
+        // Asegurar que la entrega sea visible para los repartidores
+        deliveryData.availableForDrivers = true;
+        deliveryData.visibility = "public";
+        deliveryData.isPublished = true;
+        deliveryData.published = true;
+        deliveryData.publicationStatus = "active";
+        deliveryData.driverStatus = "available";
+        deliveryData.searchable = true;
+        deliveryData.visibleInFeed = true;
+        deliveryData.region = "all";
+        
+        console.log(`[handlePublishDelivery] Datos de entrega a crear:`, deliveryData);          try {
+            // Guardar en la colección de deliveries
+            const newDeliveryRef = await addDoc(collection(db, "deliveries"), deliveryData);
+            console.log(`[handlePublishDelivery] ✅ Entrega creada con ID: ${newDeliveryRef.id}`);
+            
+            // Actualizar la solicitud con el ID de entrega y otros campos necesarios
+            await updateDoc(quoteRef, {
+              deliveryId: newDeliveryRef.id,
+              status: "confirmado",
+              deliveryStatus: "pendingDriver",
+              isPublished: true,
+              published: true,
+              deliveryPublished: true
+            });
+            
+            // Usar el nuevo ID para continuar
+            deliveryId = newDeliveryRef.id;
+            
+            // Si todo salió bien, seguimos con el resto del proceso
+            console.log(`[handlePublishDelivery] ✅ ID de entrega creado y actualizado correctamente`);
+          } catch (addError) {
+            console.error(`[handlePublishDelivery] Error al guardar en Firestore:`, addError);
+            throw new Error(`Error al guardar la entrega: ${addError.message}`);
+          }
+        } catch (innerError) {
+          console.error(`[handlePublishDelivery] Error al crear deliveryId:`, innerError);
+          throw new Error(`Error al crear ID de entrega: ${innerError.message}`);
+        }
+      }
+      
+      // Actualizar el documento de entrega para marcarlo como publicado
+      try {
+        if (!deliveryId) {
+          throw new Error("No se tiene un ID de entrega para publicar");
+        }
+        
+        const deliveryRef = doc(db, "deliveries", deliveryId);
+        
+        // Primero verificamos si el documento existe
+        const deliverySnap = await getDoc(deliveryRef);
+        if (!deliverySnap.exists()) {
+          throw new Error(`No se encontró el documento de entrega con ID ${deliveryId}`);
+        }
+        
+        // Actualizamos el documento con todos los campos necesarios para garantizar visibilidad
+        await updateDoc(deliveryRef, {
+          isPublished: true,
+          published: true,
+          publishedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          // Añadir etiquetas de visibilidad para que aparezca en la lista de trabajos disponibles
+          visibility: "public",
+          status: "pendingDriver",
+          // Campos adicionales para asegurar visibilidad
+          availableForDrivers: true,
+          publicationStatus: "active",
+          driverStatus: "available",
+          searchable: true,
+          visibleInFeed: true,
+          region: "all",
+          // Flag para indicar que está listo para ser asignado
+          readyForAssignment: true
+        });
+        
+        console.log(`[handlePublishDelivery] ✅ Documento de entrega actualizado correctamente`);
+      } catch (updateError) {
+        console.error(`[handlePublishDelivery] Error al actualizar el documento de entrega:`, updateError);
+        throw new Error(`Error al actualizar el documento de entrega: ${updateError.message}`);
+      }
+      
+      // Actualizar la solicitud original
+      const quoteRef = doc(db, "solicitud", quoteId);
+      const quoteSnap = await getDoc(quoteRef);
+      
+      if (quoteSnap.exists()) {
+        const quoteData = quoteSnap.data();
+        const existingComments = quoteData.comments || [];
+        
+        // Añadir un comentario para notificar que se ha publicado el viaje
+        const newComment = {
+          id: Date.now().toString(),
+          text: "El viaje ha sido publicado para todos los repartidores disponibles. Se le notificará cuando un repartidor acepte el pedido.",
+          userId: company.userId,
+          userName: "Sistema",
+          createdAt: new Date().toISOString(),
+          isSystem: true
+        };
+        
+        // Actualizamos la solicitud con todos los campos necesarios
+        await updateDoc(quoteRef, {
+          deliveryStatus: "pendingDriver",
+          status: "pendingDriver", // Aseguramos que ambos campos estén actualizados
+          isPublished: true,
+          published: true,
+          deliveryPublished: true, // Campo adicional para compatibilidad
+          driverAssignmentStatus: "pending", // Estado para asignación de repartidor
+          visibleToDrivers: true, // Visibilidad explícita para repartidores
+          comments: [...existingComments, newComment]
+        });
+        
+        // Añadir un comentario al historial de la entrega
+        const commentData = {
+          text: "Viaje publicado para repartidores disponibles",
+          createdAt: serverTimestamp(),
+          userId: company.userId || "sistema",
+          userName: company.name || "Sistema",
+          type: "system"
+        };
+
+        await addDoc(collection(db, "deliveries", deliveryId, "comments"), commentData);
+        
+        console.log(`[handlePublishDelivery] ✅ Viaje publicado correctamente con ID: ${deliveryId}`);
+        
+        // Mostrar alerta de éxito
+        alert("¡Viaje publicado exitosamente! Los repartidores cercanos podrán verlo y aceptarlo.");
+        
+        // Actualizar estado local inmediatamente para feedback visual
+        setRealQuotes(prevQuotes => {
+          const updated = prevQuotes.map(quote => 
+            quote.id === quoteId 
+              ? { 
+                  ...quote, 
+                  isPublished: true,
+                  published: true,
+                  deliveryPublished: true,
+                  comments: [...(quote.comments || []), newComment]
+                } 
+              : quote
+          );
+          return updated;
+        });
+        
+        // También actualizar los pedidos aceptados si el pedido está ahí
+        setAcceptedQuotes(prevQuotes => {
+          return prevQuotes.map(quote => 
+            quote.id === quoteId 
+              ? { 
+                  ...quote, 
+                  isPublished: true,
+                  published: true,
+                  deliveryPublished: true
+                } 
+              : quote
+          );
+        });
+        
+        // Recargar datos para ver cambios
+        setTimeout(() => {
+          // Recargar las solicitudes para actualizar UI
+          loadQuotes();
+          
+          // Recargar completamente la página para refrescar todo el estado
+          window.location.reload();
+        }, 1000);
+      } else {
+        throw new Error(`No se encontró la solicitud con ID ${quoteId}`);
+      }
+    } catch (error) {
+      console.error("Error al publicar viaje:", error);
+      alert(`Error al publicar viaje: ${error.message || "Inténtelo de nuevo."}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+  
+  // Función para denegar una solicitud
+  const handleDenyQuote = async (quoteId: string) => {
+    if (isProcessing) return;
+    
+    try {
+      setIsProcessing(true);
+      console.log(`[handleDenyQuote] Intentando denegar solicitud ${quoteId}...`);
+      
+      const quoteRef = doc(db, "solicitud", quoteId);
+      
+      // Actualizar el estado de la solicitud a "denegado"
+      await updateDoc(quoteRef, {
+        status: "denegado"
+      });
+      
+      console.log(`[handleDenyQuote] ❌ Solicitud ${quoteId} denegada en Firestore`);
+      
+      // Actualizar el estado local
+      setRealQuotes(prevQuotes => {
+        const filtered = prevQuotes.filter(quote => quote.id !== quoteId);
+        console.log("[handleDenyQuote] Eliminando solicitud del estado local");
+        return filtered;
+      });
+      
+      // Opcional: mostrar alguna notificación
+      alert("Solicitud denegada correctamente");
+      
+      // Refrescar los datos
+      setTimeout(() => {
+        console.log("[handleDenyQuote] Recargando datos...");
+        loadQuotes();
+      }, 1000); // Pequeño delay para asegurar que Firestore se ha actualizado
+      
+    } catch (error) {
+      console.error("Error al denegar la solicitud:", error);
+      alert("Error al denegar la solicitud. Por favor, inténtalo de nuevo.");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  return (
+    <DashboardLayout>
+      <div className="space-y-4 max-w-7xl mx-auto px-2 py-2 sm:px-4 sm:py-4 bg-gradient-to-b from-blue-50 to-white min-h-screen">
+        {/* Welcome Section - Diseño avanzado y moderno */}
+        <div className="rounded-2xl p-4 sm:p-6 bg-gradient-to-r from-blue-800 via-blue-700 to-blue-600 shadow-lg overflow-hidden relative">
+          {/* Elementos decorativos de fondo */}
+          <div className="absolute top-0 left-0 w-full h-full overflow-hidden opacity-10">
+            <div className="absolute top-0 left-0 w-64 h-64 bg-white rounded-full -translate-x-1/2 -translate-y-1/2"></div>
+            <div className="absolute bottom-0 right-0 w-96 h-96 bg-white rounded-full translate-x-1/3 translate-y-1/3"></div>
+          </div>
+          
+          <div className="relative flex flex-col sm:flex-row items-center justify-between gap-4 sm:gap-6 text-white">
+            <div className="flex flex-col sm:flex-row items-center gap-4">
+              <div className="relative">
+                <Avatar className="h-16 w-16 sm:h-20 sm:w-20 ring-4 ring-blue-300 shadow-lg">
+                  {company.profileImage ? (
+                    <AvatarImage src={company.profileImage} alt={company.name} />
+                  ) : (
+                    <AvatarFallback className="bg-blue-400 text-white text-xl">
+                      <Building2 className="h-8 w-8" />
+                    </AvatarFallback>
+                  )}
+                </Avatar>
+                {company.isVerified && (
+                  <div className="absolute -bottom-1 -right-1 bg-blue-100 text-blue-600 p-1 rounded-full">
+                    <ShieldCheck className="h-5 w-5" />
+                  </div>
+                )}
+              </div>
+              
+              <div className="text-center sm:text-left">
+                <h1 className="text-xl sm:text-3xl font-bold tracking-tight">¡Hola, {company.name || "Empresa"}!</h1>
+                <div className="flex flex-wrap justify-center sm:justify-start items-center gap-2 mt-1">
+                  {company.isVerified ? (
+                    <Badge className="bg-blue-300/30 hover:bg-blue-300/40 text-white border-none px-2 py-1">
+                      <ShieldCheck className="h-3 w-3 mr-1" />
+                      Verificada
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="bg-red-500/20 hover:bg-red-500/30 border-red-300/50 text-white px-2 py-1">
+                      <AlertCircle className="h-3 w-3 mr-1" />
+                      Sin verificar
+                    </Badge>
+                  )}
+                  
+                  {company.hasLocation ? (
+                    <Badge className="bg-green-300/30 hover:bg-green-300/40 text-white border-none px-2 py-1">
+                      <MapPin className="h-3 w-3 mr-1" />
+                      Ubicación configurada
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="bg-amber-500/20 hover:bg-amber-500/30 border-amber-300/50 text-white px-2 py-1">
+                      <MapPin className="h-3 w-3 mr-1" />
+                      Sin ubicación
+                    </Badge>
+                  )}
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex flex-wrap justify-center sm:justify-end gap-2 w-full sm:w-auto mt-3 sm:mt-0">
+              {!company.isVerified && (
+                <Button 
+                  className="text-xs sm:text-sm bg-amber-500 hover:bg-amber-600 text-white rounded-lg shadow-md border-none w-full sm:w-auto"
+                  onClick={() => navigate('/backoffice/verification')}
+                >
+                  <ShieldCheck className="h-4 w-4 mr-2" />
+                  Verificar Empresa
+                </Button>
+              )}
+              {!company.hasLocation && (
+                <Button 
+                  className="text-xs sm:text-sm bg-blue-500 hover:bg-blue-600 text-white rounded-lg shadow-md border-none w-full sm:w-auto"
+                  onClick={() => navigate('/backoffice/profile')}
+                >
+                  <MapPin className="h-4 w-4 mr-2" />
+                  Configurar Ubicación
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Statistics Cards - Diseño avanzado y moderno */}
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-4 mt-4">
+          {stats.map((stat, index) => (
+            <Card key={index} className="rounded-xl overflow-hidden border-none shadow-md bg-gradient-to-br from-white to-gray-50 hover:shadow-lg transition-all duration-300">
+              <CardContent className="p-3 sm:p-4 relative">
+                <div className="flex items-center gap-3 mb-2">
+                  <div className={`p-2 sm:p-3 rounded-full bg-gradient-to-br ${
+                    stat.title.includes("Pendientes") 
+                      ? "from-amber-100 to-amber-200" 
+                      : stat.title.includes("Aceptadas") 
+                        ? "from-green-100 to-green-200" 
+                        : stat.title.includes("Completados") 
+                          ? "from-blue-100 to-blue-200" 
+                          : "from-purple-100 to-purple-200"
+                  }`}>
+                    <stat.icon className={`h-5 w-5 sm:h-6 sm:w-6 ${stat.color}`} />
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-gray-600 leading-tight">{stat.title}</p>
+                    <p className="text-xl sm:text-2xl font-bold text-gray-900 leading-tight">
+                      {stat.title.includes("Pendientes") ? pendingQuotes?.length || 0 : stat.value}
+                    </p>
+                  </div>
+                </div>
+                {stat.trend && (
+                  <div className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full inline-block">
+                    {stat.trend}
+                  </div>
+                )}
+                <div className="absolute -bottom-1 -right-1 opacity-10">
+                  <stat.icon className={`h-14 w-14 ${stat.color}`} />
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+
+        {/* ALERTA PARA PEDIDOS SIN PUBLICAR */}
+        {acceptedQuotes.some(q => !q.driverId && (!q.isPublished && !q.published)) && (
+          <div className="bg-red-50 border-2 border-red-300 p-4 rounded-xl mt-4 animate-pulse">
+            <div className="flex items-center gap-3">
+              <div className="bg-red-100 p-3 rounded-full">
+                <AlertCircle className="h-6 w-6 text-red-600" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-bold text-red-800">¡Atención! Tienes pedidos sin publicar</h3>
+                <p className="text-sm text-red-700">
+                  Hay pedidos que necesitan ser publicados para que los repartidores puedan verlos. 
+                  Busca el botón "Publicar Viaje" junto a "Actualizar Estado" en los pedidos resaltados.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {/* Pedidos Aceptados - En Proceso */}
+        {acceptedQuotes.length > 0 && (
+          <Card className="rounded-xl overflow-hidden border-none shadow-lg bg-white mt-4">
+            <CardHeader className="bg-gradient-to-r from-green-50 to-green-100 p-3 sm:p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-lg font-bold text-green-900">Pedidos En Proceso</CardTitle>
+                  <CardDescription className="text-green-600 text-xs">
+                    Cotizaciones aprobadas que requieren seguimiento y actualización
+                  </CardDescription>
+                </div>
+                <Button
+                  onClick={() => setShowAllActiveOrders(!showAllActiveOrders)}
+                  className="bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white text-xs px-2 py-1 sm:px-3 sm:py-2 rounded-lg shadow-md h-auto"
+                  size="sm"
+                >
+                  {showAllActiveOrders ? "Mostrar menos" : "Ver más"}
+                  <ArrowRight className="ml-1 h-3 w-3" />
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="divide-y divide-green-100">
+                {(showAllActiveOrders ? [...acceptedQuotes].reverse() : [...acceptedQuotes].reverse().slice(0, 3)).map((quote) => (
+                  <div
+                    key={quote.id}
+                    className={`p-3 transition-colors cursor-pointer relative group shadow-sm hover:shadow-md rounded-md ${
+                      !quote.driverId && (!quote.isPublished && !quote.published)
+                        ? "bg-amber-50 border-2 border-amber-300 hover:bg-amber-100"
+                        : "hover:bg-green-50/50 border border-transparent hover:border-green-200"
+                    }`}
+                    onClick={() => navigate(`/backoffice/order-tracking?id=${quote.id}`)}
+                    title="Click para ver detalles y actualizar estado"
+                  >
+                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                      <Info className="h-4 w-4 text-green-600" />
+                    </div>
+                    <div className="flex flex-col">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-2">
+                        <div className="flex items-center gap-2 mb-2 sm:mb-0">
+                          <div className={`p-2 rounded-full ${
+                            quote.deliveryStatus === 'pendiente' ? 'bg-yellow-100' :
+                            quote.deliveryStatus === 'enviado' ? 'bg-blue-100' :
+                            quote.deliveryStatus === 'en_camino' ? 'bg-purple-100' :
+                            quote.deliveryStatus === 'entregado' ? 'bg-green-100' :
+                            quote.deliveryStatus === 'pendingDriver' ? 'bg-amber-100' : 'bg-gray-100'
+                          }`}>
+                            {getDeliveryStatusIcon(quote.deliveryStatus || 'pendiente')}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-1">
+                              <h3 className="font-semibold text-sm text-gray-900 truncate max-w-[150px]">
+                                {quote.title || quote.requestTitle || "Pedido"}
+                              </h3>
+                              <Badge className={`text-xs px-1.5 py-0.5 rounded-full ${getDeliveryStatusColor(quote.deliveryStatus || 'pendiente')}`}>
+                                {quote.deliveryStatus === 'pendiente' ? 'Pendiente' : 
+                                 quote.deliveryStatus === 'enviado' ? 'Enviado' : 
+                                 quote.deliveryStatus === 'en_camino' ? 'En camino' : 
+                                 quote.deliveryStatus === 'entregado' ? '✅ Entregado' : 
+                                 quote.deliveryStatus === 'pendingDriver' ? 'Esperando repartidor' : 'Pendiente'}
+                              </Badge>
+                              {quote.deliveryId && !quote.driverId && (!quote.isPublished && !quote.published) && (
+                                <Badge className="bg-red-100 text-red-800 text-xs ml-1">
+                                  Sin publicar
+                                </Badge>
+                              )}
+                            </div>
+                            <p className="text-xs text-gray-500">
+                              Cliente: {quote.clientName || quote.userId || "Cliente"}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 text-xs text-gray-500">
+                          <span className="flex items-center bg-green-50 text-green-700 px-2 py-1 rounded-full font-medium">
+                            <DollarSign className="h-3 w-3 mr-1" />
+                            ${
+                              // Intentamos mostrar el monto total de distintas maneras
+                              quote.totalAmount 
+                                ? quote.totalAmount.toLocaleString() 
+                                : quote.amount 
+                                  ? quote.amount.toLocaleString() 
+                                  : quote.total 
+                                    ? quote.total.toLocaleString()
+                                    : quote.budget
+                                      ? quote.budget.toLocaleString()
+                                      : (quote.products && quote.products.length > 0)
+                                        ? calculateTotal(quote.products).toLocaleString()
+                                        : (quote.items && quote.items.length > 0)
+                                          ? calculateTotal(quote.items).toLocaleString()
+                                          : "Por determinar"
+                            }
+                          </span>
+                          {(quote.deliveryTime || quote.tiempo) && (
+                            <span className="flex items-center">
+                              <Clock className="h-3 w-3 mr-1" />
+                              {quote.deliveryTime || quote.tiempo}
+                            </span>
+                          )}
+                        </div>
+                        
+                        {/* Estado técnico para debugging */}
+                        <div className="flex flex-wrap gap-1 mt-1 text-xs">
+                          {quote.deliveryId && (
+                            <span className="bg-blue-50 text-blue-700 px-1 py-0.5 rounded">
+                              ID: {quote.deliveryId.substring(0, 8)}...
+                            </span>
+                          )}
+                          {quote.status && (
+                            <span className="bg-gray-50 text-gray-700 px-1 py-0.5 rounded">
+                              Status: {quote.status}
+                            </span>
+                          )}
+                          {quote.driverId && (
+                            <span className="bg-green-50 text-green-700 px-1 py-0.5 rounded">
+                              Repartidor: ✓
+                            </span>
+                          )}
+                          {quote.isPublished || quote.published ? (
+                            <span className="bg-purple-50 text-purple-700 px-1 py-0.5 rounded">
+                              Publicado: ✓
+                            </span>
+                          ) : (
+                            <span className="bg-red-50 text-red-700 px-1 py-0.5 rounded">
+                              Publicado: ✕
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      
+                      {/* Mostrar botón de publicar si el pedido tiene deliveryId y no está publicado */}
+                      {quote.deliveryId && !quote.driverId && (!quote.isPublished && !quote.published) && (
+                        <div className="mt-3 mb-2 bg-amber-50 p-3 rounded-lg border border-amber-100 relative animate-pulse">
+                          <div className="absolute -top-2 -right-2">
+                            <div className="bg-red-500 text-white text-xs font-bold px-2 py-1 rounded-full animate-bounce">
+                              ¡Publicar!
+                            </div>
+                          </div>
+                          <div className="flex justify-between items-center mb-2">
+                            <h4 className="text-xs font-semibold text-amber-800 flex items-center">
+                              <TruckIcon className="h-3.5 w-3.5 mr-1.5 text-amber-600" />
+                              Esperando Repartidor
+                            </h4>
+                          </div>
+                          <div>
+                            <p className="text-xs text-amber-700 mb-3">
+                              <strong>¡Importante!</strong> Este pedido necesita ser publicado para que los repartidores puedan verlo. Haz clic en el botón para hacerlo visible.
+                            </p>
+                            <Button
+                              size="sm"
+                              className="bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white text-xs px-4 py-2 h-auto rounded-lg shadow-md hover:shadow-lg w-full flex items-center justify-center border-2 border-purple-400"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handlePublishDelivery(quote.id, quote.deliveryId);
+                              }}
+                              disabled={isProcessing}
+                            >
+                              <TruckIcon className="h-3.5 w-3.5 mr-2" />
+                              Publicar Viaje
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    
+                      {/* Mostrar productos del pedido activo */}
+                      {(quote.products && quote.products.length > 0) ? (
+                        <div className="mt-2 mb-3">
+                          <p className="text-xs font-medium text-gray-700 mb-2 flex items-center">
+                            <Package className="h-3.5 w-3.5 mr-1.5 text-green-600" />
+                            Productos del pedido:
+                          </p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 overflow-x-auto">
+                            {quote.products.map((product, idx) => (
+                              <div key={idx} className="flex items-center bg-white p-2 rounded-lg border border-green-100 shadow-sm hover:shadow-md transition-all duration-200">
+                                {(product.image || product.imageUrl || product.img || product.photo || product.photoUrl) ? (
+                                  <img 
+                                    src={product.image || product.imageUrl || product.img || product.photo || product.photoUrl} 
+                                    alt={product.name} 
+                                    className="h-12 w-12 object-cover rounded-md mr-3 border border-gray-200"
+                                    onError={(e) => {
+                                      e.currentTarget.onerror = null;
+                                      e.currentTarget.src = "/placeholder.svg";
+                                    }}
+                                  />
+                                ) : (
+                                  <div className="h-12 w-12 bg-gray-100 rounded-md mr-3 flex items-center justify-center">
+                                    <Package className="h-6 w-6 text-gray-400" />
+                                  </div>
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium text-gray-800 truncate">{product.name}</p>
+                                  <div className="flex items-center justify-between mt-1">
+                                    <p className="text-xs text-gray-500">
+                                      Cant: {product.quantity || product.cantidad || 1}
+                                    </p>
+                                    <p className="text-xs font-medium bg-green-50 text-green-700 px-2 py-0.5 rounded-full flex items-center">
+                                      <DollarSign className="h-3 w-3 mr-0.5" />
+                                      {typeof product.price === 'number' 
+                                        ? product.price.toLocaleString() 
+                                        : typeof product.price === 'string' 
+                                          ? parseFloat(product.price).toLocaleString() 
+                                          : typeof product.precio === 'number'
+                                            ? product.precio.toLocaleString()
+                                            : typeof product.precio === 'string'
+                                              ? parseFloat(product.precio).toLocaleString()
+                                              : "0"}
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : quote.items && quote.items.length > 0 ? (
+                        <div className="mt-2 mb-3">
+                          <p className="text-xs font-medium text-gray-700 mb-2 flex items-center">
+                            <Package className="h-3.5 w-3.5 mr-1.5 text-green-600" />
+                            Productos del pedido:
+                          </p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 overflow-x-auto">
+                            {quote.items.map((item, idx) => (
+                              <div key={idx} className="flex items-center bg-white p-2 rounded-lg border border-green-100 shadow-sm hover:shadow-md transition-all duration-200">
+                                {(item.image || item.imageUrl || item.img || item.photo || item.photoUrl) ? (
+                                  <img 
+                                    src={item.image || item.imageUrl || item.img || item.photo || item.photoUrl} 
+                                    alt={item.name} 
+                                    className="h-12 w-12 object-cover rounded-md mr-3 border border-gray-200"
+                                    onError={(e) => {
+                                      e.currentTarget.onerror = null;
+                                      e.currentTarget.src = "/placeholder.svg";
+                                    }}
+                                  />
+                                ) : (
+                                  <div className="h-12 w-12 bg-gray-100 rounded-md mr-3 flex items-center justify-center">
+                                    <Package className="h-6 w-6 text-gray-400" />
+                                  </div>
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium text-gray-800 truncate">{item.name}</p>
+                                  <div className="flex items-center justify-between mt-1">
+                                    <p className="text-xs text-gray-500">
+                                      Cant: {item.quantity || item.cantidad || 1}
+                                    </p>
+                                    <p className="text-xs font-medium bg-green-50 text-green-700 px-2 py-0.5 rounded-full flex items-center">
+                                      <DollarSign className="h-3 w-3 mr-0.5" />
+                                      {typeof item.price === 'number' 
+                                        ? item.price.toLocaleString() 
+                                        : typeof item.price === 'string' 
+                                          ? parseFloat(item.price).toLocaleString() 
+                                          : typeof item.precio === 'number'
+                                            ? item.precio.toLocaleString()
+                                            : typeof item.precio === 'string'
+                                              ? parseFloat(item.precio).toLocaleString()
+                                              : "0"}
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                      
+                      {/* Mostrar repartidores interesados si el estado es "pendingDriver" o el pedido está confirmado sin driver asignado */}
+                      {((quote.deliveryStatus === 'pendingDriver' || quote.status === 'pendingDriver' || quote.status === 'confirmado' || quote.estadoEmpresa === 'en_espera') && quote.deliveryId) && (
+                        <div className="mt-3 mb-2 bg-amber-50 p-3 rounded-lg border border-amber-100">
+                          <div className="flex justify-between items-center mb-2">
+                            <h4 className="text-xs font-semibold text-amber-800 flex items-center">
+                              <TruckIcon className="h-3.5 w-3.5 mr-1.5 text-amber-600" />
+                              Esperando Repartidor
+                            </h4>
+                            {quote.isPublished && (
+                              <Badge className="bg-purple-100 text-purple-800 text-xs">
+                                ✓ Viaje publicado
+                              </Badge>
+                            )}
+                          </div>
+                          
+                          {/* Si hay repartidores interesados, mostrarlos */}
+                          {quote.interestedDrivers && Array.isArray(quote.interestedDrivers) && quote.interestedDrivers.length > 0 ? (
+                            <div>
+                              <p className="text-xs text-amber-700 mb-2">
+                                Los siguientes repartidores están interesados en este pedido:
+                              </p>
+                              <div className="space-y-2">
+                                {quote.interestedDrivers.map((driver, idx) => (
+                                  <div key={idx} className="flex items-center justify-between bg-white p-2 rounded-md border border-amber-200">
+                                    <div className="flex items-center">
+                                      <div className="h-8 w-8 bg-amber-100 rounded-full mr-2 flex items-center justify-center">
+                                        <User className="h-4 w-4 text-amber-600" />
+                                      </div>
+                                      <div>
+                                        <p className="text-xs font-medium">{driver.name}</p>
+                                        <p className="text-xs text-gray-500">{driver.phone || 'Sin teléfono'}</p>
+                                      </div>
+                                    </div>
+                                    <Button
+                                      size="sm"
+                                      className="bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white text-xs px-2 py-1 h-auto rounded-lg shadow-sm"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleAssignDriver(quote.id, driver.id, quote.deliveryId);
+                                      }}
+                                    >
+                                      Asignar
+                                    </Button>
+                                  </div>
+                                ))}
+                              </div>
+                              
+                              {/* Mostrar botón de publicar incluso si hay repartidores interesados pero el pedido no está publicado */}
+                              {!quote.isPublished && !quote.published && (
+                                <div className="mt-3">
+                                  <Button
+                                    size="sm"
+                                    className="bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white text-xs px-4 py-2 h-auto rounded-lg shadow-sm w-full flex items-center justify-center"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handlePublishDelivery(quote.id, quote.deliveryId);
+                                    }}
+                                    disabled={isProcessing}
+                                  >
+                                    <TruckIcon className="h-3.5 w-3.5 mr-2" />
+                                    Publicar Viaje
+                                  </Button>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div>
+                              <p className="text-xs text-amber-700 mb-3">
+                                Aún no hay repartidores interesados en este pedido. Puedes publicar el viaje para que sea visible para todos los repartidores disponibles.
+                              </p>
+                              <Button
+                                size="sm"
+                                className="bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white text-xs px-4 py-2 h-auto rounded-lg shadow-sm w-full flex items-center justify-center"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handlePublishDelivery(quote.id, quote.deliveryId);
+                                }}
+                                disabled={isProcessing || quote.isPublished || quote.published}
+                              >
+                                <TruckIcon className="h-3.5 w-3.5 mr-2" />
+                                {(quote.isPublished || quote.published) ? "Viaje ya publicado" : "Publicar Viaje"}
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      
+                      {/* Botones de acción */}
+                      <div className="flex flex-col sm:flex-row gap-2 mt-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100 text-xs px-2 py-1 sm:px-3 sm:py-1.5 h-auto rounded-lg w-full sm:w-auto"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate(`/backoffice/order-chat?id=${quote.id}`);
+                          }}
+                        >
+                          <MessageSquare className="w-3 h-3 mr-1" />
+                          Contactar Cliente
+                        </Button>
+                        <Button
+                          size="sm"
+                          className="bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white text-xs px-2 py-1 sm:px-3 sm:py-1.5 h-auto rounded-lg shadow-sm w-full sm:w-auto"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate(`/backoffice/order-tracking?id=${quote.id}`);
+                          }}
+                        >
+                          <TruckIcon className="w-3 h-3 mr-1" />
+                          Actualizar Estado
+                        </Button>
+                        {/* SOLUCIÓN PARA PEDIDOS SIN REPARTIDOR: Botón para publicar viaje SIEMPRE visible para pedidos sin repartidor */}
+                        {/* Siempre mostramos el botón si no hay repartidor asignado */}
+                        {!quote.driverId && (
+                          <Button
+                            size="sm"
+                            className="bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white text-xs px-3 py-1 sm:px-3 sm:py-1.5 h-auto rounded-lg shadow-md border-2 border-purple-400 w-full sm:w-auto flex items-center justify-center animate-pulse"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              if (isProcessing) {
+                                alert("Hay un proceso en curso. Por favor espere.");
+                                return;
+                              }
+                              
+                              setIsProcessing(true);
+                              try {
+                                console.log(`[Publicar Viaje] Iniciando proceso para pedido ${quote.id}`);
+                                
+                                // Si ya está publicado, no hacemos nada
+                                if (quote.isPublished || quote.published) {
+                                  alert("Este viaje ya está publicado para repartidores.");
+                                  setIsProcessing(false);
+                                  return;
+                                }
+                                
+                                // CASO 1: No tiene deliveryId, lo creamos
+                                if (!quote.deliveryId) {
+                                  console.log(`[Publicar Viaje] Pedido ${quote.id} sin deliveryId, se creará uno nuevo`);
+                                  alert("Este pedido no tiene ID de entrega. Se creará uno automáticamente y se publicará.");
+                                  
+                                  // Obtener datos del pedido
+                                  const quoteRef = doc(db, "solicitud", quote.id);
+                                  const quoteSnap = await getDoc(quoteRef);
+                                  
+                                  if (!quoteSnap.exists()) {
+                                    throw new Error("La solicitud no existe");
+                                  }
+                                  
+                                  const quoteData = quoteSnap.data();
+                                  const auth = getAuth();
+                                  const user = auth.currentUser;
+                                  
+                                  if (!user) {
+                                    throw new Error("Usuario no autenticado");
+                                  }
+                                  
+                                  // Crear registro en la colección de entregas con datos válidos para Firestore
+                                  const deliveryData: any = {
+                                    orderId: quote.id,
+                                    companyId: user.uid,
+                                    companyName: company.name || "Empresa",
+                                    userId: quoteData.userId || quoteData.clientId || "Cliente",
+                                    clientName: quoteData.clientName || quoteData.userName || quoteData.userId || "Cliente",
+                                    items: quoteData.products || quoteData.items || [],
+                                    totalAmount: Number(quoteData.totalAmount || quoteData.amount || quoteData.total || 0),
+                                    status: "pendingDriver" as DeliveryStatus,
+                                    createdAt: serverTimestamp(),
+                                    updatedAt: serverTimestamp(),
+                                    deliveryAddress: quoteData.deliveryAddress || quoteData.address || "",
+                                    deliveryFee: Number(quoteData.deliveryFee || 0),
+                                    interestedDrivers: [], // Lista vacía de repartidores interesados
+                                    isPublished: true, // Ya lo marcamos como publicado desde el inicio
+                                    published: true,
+                                    publicationStatus: "active",
+                                    visibility: "public",
+                                    availableForDrivers: true
+                                  };
+                                  
+                                  // Solo añadir deliveryCoordinates si existe y no es undefined
+                                  // Importante: Firestore no acepta valores undefined
+                                  console.log("[Publicar Viaje] Verificando coordenadas:", quoteData.deliveryCoordinates, quoteData.coordinates);
+                                  
+                                  if (quoteData.deliveryCoordinates && typeof quoteData.deliveryCoordinates === 'object') {
+                                    deliveryData.deliveryCoordinates = quoteData.deliveryCoordinates;
+                                    console.log("[Publicar Viaje] Usando deliveryCoordinates existentes");
+                                  } else if (quoteData.coordinates && typeof quoteData.coordinates === 'object') {
+                                    deliveryData.deliveryCoordinates = quoteData.coordinates;
+                                    console.log("[Publicar Viaje] Usando coordinates alternativas");
+                                  } else {
+                                    // Si no hay coordenadas válidas, usar valor nulo en lugar de undefined
+                                    console.log("[Publicar Viaje] No se encontraron coordenadas válidas para la entrega, usando null");
+                                    deliveryData.deliveryCoordinates = null;
+                                  }
+                                  
+                                  try {
+                                    // Guardar en la colección de deliveries
+                                    // Asegurar que todos los campos necesarios para la visibilidad estén definidos
+                                    deliveryData.availableForDrivers = true;
+                                    deliveryData.visibility = "public";
+                                    deliveryData.isPublished = true;
+                                    deliveryData.published = true;
+                                    deliveryData.publicationStatus = "active";
+                                    deliveryData.driverStatus = "available";
+                                    deliveryData.searchable = true;
+                                    deliveryData.visibleInFeed = true;
+                                    deliveryData.region = "all";
+                                    deliveryData.readyForAssignment = true;
+                                    
+                                    console.log(`[Publicar Viaje] Datos de entrega a enviar:`, JSON.stringify(deliveryData));
+                                    console.log(`[Publicar Viaje] Creando nuevo registro de entrega...`);
+                                    
+                                    // Verificamos que no haya campos undefined antes de enviar
+                                    Object.keys(deliveryData).forEach(key => {
+                                      if (deliveryData[key] === undefined) {
+                                        console.log(`[Publicar Viaje] ⚠️ Campo ${key} es undefined, reemplazando con null`);
+                                        deliveryData[key] = null;
+                                      }
+                                    });
+                                    
+                                    const newDeliveryRef = await addDoc(collection(db, "deliveries"), deliveryData);
+                                    const deliveryId = newDeliveryRef.id;
+                                    console.log(`[Publicar Viaje] ✅ Entrega creada con ID: ${deliveryId}`);
+                                    
+                                    // Actualizar la solicitud con los campos necesarios
+                                    await updateDoc(quoteRef, {
+                                      deliveryId: deliveryId,
+                                      status: "confirmado",
+                                      deliveryStatus: "pendingDriver",
+                                      isPublished: true,
+                                      published: true,
+                                      deliveryPublished: true,
+                                      publishedAt: serverTimestamp()
+                                    });
+                                    console.log(`[Publicar Viaje] ✅ Solicitud actualizada con deliveryId`);
+                                    
+                                    // Añadir un comentario para notificar al cliente
+                                    const newComment = {
+                                      id: Date.now().toString(),
+                                      text: "El viaje ha sido publicado para todos los repartidores disponibles. Se le notificará cuando un repartidor acepte el pedido.",
+                                      userId: company.userId,
+                                      userName: "Sistema",
+                                      createdAt: new Date().toISOString(),
+                                      isSystem: true
+                                    };
+                                    
+                                    // Obtener los comentarios existentes o inicializar un array vacío
+                                    const existingComments = quoteData.comments || [];
+                                    
+                                    // Añadir el nuevo comentario
+                                    await updateDoc(quoteRef, {
+                                      comments: [...existingComments, newComment]
+                                    });
+                                    
+                                    // Actualizar estado local para feedback inmediato
+                                    setRealQuotes(prevQuotes => {
+                                      const updated = prevQuotes.map(q => 
+                                        q.id === quote.id 
+                                          ? { 
+                                              ...q, 
+                                              deliveryId: deliveryId,
+                                              isPublished: true,
+                                              published: true,
+                                              deliveryPublished: true,
+                                              deliveryStatus: "pendingDriver",
+                                              status: "confirmado",
+                                              comments: [...(q.comments || []), newComment]
+                                            } 
+                                          : q
+                                      );
+                                      return updated;
+                                    });
+                                    
+                                    setAcceptedQuotes(prevQuotes => {
+                                      const updated = prevQuotes.map(q => 
+                                        q.id === quote.id 
+                                          ? { 
+                                              ...q, 
+                                              deliveryId: deliveryId,
+                                              isPublished: true,
+                                              published: true,
+                                              deliveryPublished: true,
+                                              deliveryStatus: "pendingDriver",
+                                              status: "confirmado"
+                                            } 
+                                          : q
+                                      );
+                                      return updated;
+                                    });
+                                    
+                                    alert("¡Viaje publicado exitosamente! Los repartidores cercanos podrán verlo y aceptarlo.");
+                                    
+                                    // Recargar datos para ver cambios
+                                    setTimeout(() => {
+                                      loadQuotes();
+                                    }, 1000);
+                                  } catch (createError) {
+                                    console.error("[Publicar Viaje] Error al crear el documento de entrega:", createError);
+                                    alert(`Error al crear el documento de entrega: ${createError.message}`);
+                                  }
+                                } 
+                                // CASO 2: Ya tiene deliveryId, solo publicamos
+                                else {
+                                  console.log(`[Publicar Viaje] Pedido ${quote.id} con deliveryId ${quote.deliveryId}, actualizando...`);
+                                  
+                                  // Actualizar el documento de entrega para marcarlo como publicado
+                                  const deliveryRef = doc(db, "deliveries", quote.deliveryId);
+                                  
+                                  // Primero verificamos si el documento existe
+                                  const deliverySnap = await getDoc(deliveryRef);
+                                  if (!deliverySnap.exists()) {
+                                    throw new Error(`No se encontró el documento de entrega con ID ${quote.deliveryId}`);
+                                  }
+                                  
+                                  // Actualizamos el documento con todos los campos necesarios
+                                  await updateDoc(deliveryRef, {
+                                    isPublished: true,
+                                    published: true,
+                                    publishedAt: serverTimestamp(),
+                                    updatedAt: serverTimestamp(),
+                                    visibility: "public",
+                                    status: "pendingDriver",
+                                    availableForDrivers: true,
+                                    publicationStatus: "active"
+                                  });
+                                  console.log(`[Publicar Viaje] ✅ Documento de entrega actualizado`);
+                                  
+                                  // Actualizar la solicitud original
+                                  const quoteRef = doc(db, "solicitud", quote.id);
+                                  const quoteSnap = await getDoc(quoteRef);
+                                  
+                                  if (quoteSnap.exists()) {
+                                    const quoteData = quoteSnap.data();
+                                    const existingComments = quoteData.comments || [];
+                                    
+                                    // Añadir un comentario para notificar que se ha publicado el viaje
+                                    const newComment = {
+                                      id: Date.now().toString(),
+                                      text: "El viaje ha sido publicado para todos los repartidores disponibles. Se le notificará cuando un repartidor acepte el pedido.",
+                                      userId: company.userId,
+                                      userName: "Sistema",
+                                      createdAt: new Date().toISOString(),
+                                      isSystem: true
+                                    };
+                                    
+                                    // Actualizamos la solicitud con todos los campos necesarios
+                                    await updateDoc(quoteRef, {
+                                      deliveryStatus: "pendingDriver",
+                                      status: "pendingDriver", 
+                                      isPublished: true,
+                                      published: true,
+                                      deliveryPublished: true,
+                                      comments: [...existingComments, newComment]
+                                    });
+                                    
+                                    // Actualizar estado local inmediatamente para feedback visual
+                                    setRealQuotes(prevQuotes => {
+                                      const updated = prevQuotes.map(q => 
+                                        q.id === quote.id 
+                                          ? { 
+                                              ...q, 
+                                              isPublished: true,
+                                              published: true,
+                                              deliveryPublished: true,
+                                              comments: [...(q.comments || []), newComment]
+                                            } 
+                                          : q
+                                      );
+                                      return updated;
+                                    });
+                                    
+                                    // También actualizar los pedidos aceptados si el pedido está ahí
+                                    setAcceptedQuotes(prevQuotes => {
+                                      return prevQuotes.map(q => 
+                                        q.id === quote.id 
+                                          ? { 
+                                              ...q, 
+                                              isPublished: true,
+                                              published: true,
+                                              deliveryPublished: true
+                                            } 
+                                          : q
+                                      );
+                                    });
+                                    
+                                    alert("¡Viaje publicado exitosamente! Los repartidores cercanos podrán verlo y aceptarlo.");
+                                    
+                                    // Recargar datos para ver cambios
+                                    setTimeout(() => {
+                                      loadQuotes();
+                                    }, 1000);
+                                  }
+                                }
+                              } catch (error: any) {
+                                console.error("[Publicar Viaje] Error:", error);
+                                alert(`Error al publicar viaje: ${error.message || "Por favor, inténtalo de nuevo."}`);
+                              } finally {
+                                setIsProcessing(false);
+                              }
+                            }}
+                            disabled={isProcessing || (quote.isPublished || quote.published)}
+                          >
+                            <TruckIcon className="w-3 h-3 mr-1" />
+                            {quote.isPublished || quote.published ? "Ya Publicado" : "Publicar Viaje"}
+                          </Button>
+                        )}
+                        {/* Botón para publicar viaje */}
+                        {quote.deliveryId && !quote.isPublished && !quote.published && !quote.driverId && (
+                          <Button
+                            size="sm"
+                            className="bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white text-xs px-3 py-1 sm:px-3 sm:py-1.5 h-auto rounded-lg shadow-sm w-full sm:w-auto flex items-center justify-center"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handlePublishDelivery(quote.id, quote.deliveryId);
+                            }}
+                            disabled={isProcessing}
+                          >
+                            <TruckIcon className="w-3 h-3 mr-1" />
+                            Publicar Viaje
+                          </Button>
+                        )}
+                        {/* Indicador de viaje publicado */}
+                        {quote.deliveryId && (quote.isPublished || quote.published) && !quote.driverId && (
+                          <Badge className="bg-purple-100 text-purple-800 text-xs h-auto sm:self-center px-2 py-1 flex items-center">
+                            ✓ Viaje publicado
+                          </Badge>
+                        )}
+                      </div>
+                      
+                      {/* Alerta flotante para publicar viaje */}
+                      {quote.deliveryId && !quote.driverId && (!quote.isPublished && !quote.published) && (
+                        <div className="fixed bottom-4 right-4 z-50 animate-bounce bg-purple-700 text-white px-4 py-2 rounded-lg shadow-xl">
+                          <p className="text-sm font-bold">¡Atención! Pedido sin publicar</p>
+                          <Button
+                            size="sm"
+                            className="bg-white text-purple-800 mt-2 w-full"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handlePublishDelivery(quote.id, quote.deliveryId);
+                            }}
+                          >
+                            <TruckIcon className="w-3 h-3 mr-1" />
+                            Publicar ahora
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              
+              {acceptedQuotes.length === 0 && (
+                <div className="flex flex-col items-center justify-center py-8 px-4 text-center">
+                  <div className="bg-green-50 p-3 rounded-full mb-2">
+                    <Package className="h-6 w-6 text-green-500" />
+                  </div>
+                  <h3 className="text-sm font-medium text-gray-900 mb-1">No hay pedidos en proceso</h3>
+                  <p className="text-xs text-gray-500 max-w-md">
+                    Cuando aceptes solicitudes, los pedidos aparecerán aquí para que puedas actualizar su estado y comunicarte con los clientes.
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+        
+        {/* Pedidos Completados */}
+        {completedQuotes.length > 0 && (
+          <Card className="rounded-xl overflow-hidden border-none shadow-lg bg-white mt-4">
+            <CardHeader className="bg-gradient-to-r from-blue-50 to-blue-100 p-3 sm:p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-lg font-bold text-blue-900">Pedidos Completados</CardTitle>
+                  <CardDescription className="text-blue-600 text-xs">
+                    Pedidos entregados y finalizados exitosamente
+                  </CardDescription>
+                </div>
+                <Button
+                  onClick={() => setShowAllCompletedOrders(!showAllCompletedOrders)}
+                  className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white text-xs px-2 py-1 sm:px-3 sm:py-2 rounded-lg shadow-md h-auto"
+                  size="sm"
+                >
+                  {showAllCompletedOrders ? "Mostrar menos" : "Ver todos"}
+                  <ArrowRight className="ml-1 h-3 w-3" />
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="divide-y divide-blue-100">
+                {(showAllCompletedOrders ? completedQuotes : completedQuotes.slice(0, 3)).map((quote) => (
+                  <div
+                    key={quote.id}
+                    className="p-3 hover:bg-blue-50/50 transition-colors cursor-pointer relative group shadow-sm hover:shadow-md border border-transparent hover:border-blue-200 rounded-md"
+                    onClick={() => navigate(`/backoffice/order-tracking?id=${quote.id}`)}
+                    title="Click para ver detalles del pedido completado"
+                  >
+                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                      <Info className="h-4 w-4 text-blue-600" />
+                    </div>
+                    <div className="flex flex-col">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-2">
+                        <div className="flex items-center gap-2 mb-2 sm:mb-0">
+                          <div className="p-2 rounded-full bg-green-100">
+                            <CheckCircle className="h-3 w-3 text-green-600" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-1">
+                              <h3 className="font-semibold text-sm text-gray-900 truncate max-w-[150px]">
+                                {quote.title || quote.requestTitle || "Pedido"}
+                              </h3>
+                              <Badge className="text-xs px-1.5 py-0.5 rounded-full bg-green-100 text-green-800">
+                                ✅ Completado
+                              </Badge>
+                            </div>
+                            <p className="text-xs text-gray-500">
+                              Cliente: {quote.clientName || quote.userId || "Cliente"}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 text-xs text-gray-500">
+                          <span className="flex items-center bg-green-50 text-green-700 px-2 py-1 rounded-full font-medium">
+                            <DollarSign className="h-3 w-3 mr-1" />
+                            ${
+                              // Intentamos mostrar el monto total de distintas maneras
+                              quote.totalAmount 
+                                ? quote.totalAmount.toLocaleString() 
+                                : quote.amount 
+                                  ? quote.amount.toLocaleString() 
+                                  : quote.total 
+                                    ? quote.total.toLocaleString()
+                                    : quote.budget
+                                      ? quote.budget.toLocaleString()
+                                      : (quote.products && quote.products.length > 0)
+                                        ? calculateTotal(quote.products).toLocaleString()
+                                        : (quote.items && quote.items.length > 0)
+                                          ? calculateTotal(quote.items).toLocaleString()
+                                          : "Por determinar"
+                            }
+                          </span>
+                          {quote.statusUpdatedAt && (
+                            <span className="flex items-center">
+                              <Calendar className="h-3 w-3 mr-1" />
+                              {new Date(quote.statusUpdatedAt.seconds * 1000).toLocaleDateString()}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      
+                      {/* Mostrar productos del pedido completado */}
+                      {(quote.products && quote.products.length > 0) ? (
+                        <div className="mt-2 mb-3">
+                          <p className="text-xs font-medium text-gray-700 mb-2 flex items-center">
+                            <Package className="h-3.5 w-3.5 mr-1.5 text-green-600" />
+                            Productos entregados:
+                          </p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 overflow-x-auto">
+                            {quote.products.map((product, idx) => (
+                              <div key={idx} className="flex items-center bg-white p-2 rounded-lg border border-green-100 shadow-sm">
+                                {(product.image || product.imageUrl || product.img || product.photo || product.photoUrl) ? (
+                                  <img 
+                                    src={product.image || product.imageUrl || product.img || product.photo || product.photoUrl} 
+                                    alt={product.name} 
+                                    className="h-12 w-12 object-cover rounded-md mr-3 border border-gray-200"
+                                    onError={(e) => {
+                                      e.currentTarget.onerror = null;
+                                      e.currentTarget.src = "/placeholder.svg";
+                                    }}
+                                  />
+                                ) : (
+                                  <div className="h-12 w-12 bg-gray-100 rounded-md mr-3 flex items-center justify-center">
+                                    <Package className="h-6 w-6 text-gray-400" />
+                                  </div>
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium text-gray-800 truncate">{product.name}</p>
+                                  <div className="flex items-center justify-between mt-1">
+                                    <p className="text-xs text-gray-500">
+                                      Cant: {product.quantity || product.cantidad || 1}
+                                    </p>
+                                    <p className="text-xs font-medium bg-green-50 text-green-700 px-2 py-0.5 rounded-full flex items-center">
+                                      <DollarSign className="h-3 w-3 mr-0.5" />
+                                      {typeof product.price === 'number' 
+                                        ? product.price.toLocaleString() 
+                                        : typeof product.price === 'string' 
+                                          ? parseFloat(product.price).toLocaleString() 
+                                          : typeof product.precio === 'number'
+                                            ? product.precio.toLocaleString()
+                                            : typeof product.precio === 'string'
+                                              ? parseFloat(product.precio).toLocaleString()
+                                              : "0"}
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : quote.items && quote.items.length > 0 ? (
+                        <div className="mt-2 mb-3">
+                          <p className="text-xs font-medium text-gray-700 mb-2 flex items-center">
+                            <Package className="h-3.5 w-3.5 mr-1.5 text-green-600" />
+                            Productos entregados:
+                          </p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 overflow-x-auto">
+                            {quote.items.map((item, idx) => (
+                              <div key={idx} className="flex items-center bg-white p-2 rounded-lg border border-green-100 shadow-sm">
+                                {(item.image || item.imageUrl || item.img || item.photo || item.photoUrl) ? (
+                                  <img 
+                                    src={item.image || item.imageUrl || item.img || item.photo || item.photoUrl} 
+                                    alt={item.name} 
+                                    className="h-12 w-12 object-cover rounded-md mr-3 border border-gray-200"
+                                    onError={(e) => {
+                                      e.currentTarget.onerror = null;
+                                      e.currentTarget.src = "/placeholder.svg";
+                                    }}
+                                  />
+                                ) : (
+                                  <div className="h-12 w-12 bg-gray-100 rounded-md mr-3 flex items-center justify-center">
+                                    <Package className="h-6 w-6 text-gray-400" />
+                                  </div>
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium text-gray-800 truncate">{item.name}</p>
+                                  <div className="flex items-center justify-between mt-1">
+                                    <p className="text-xs text-gray-500">
+                                      Cant: {item.quantity || item.cantidad || 1}
+                                    </p>
+                                    <p className="text-xs font-medium bg-green-50 text-green-700 px-2 py-0.5 rounded-full flex items-center">
+                                      <DollarSign className="h-3 w-3 mr-0.5" />
+                                      {typeof item.price === 'number' 
+                                        ? item.price.toLocaleString() 
+                                        : typeof item.price === 'string' 
+                                          ? parseFloat(item.price).toLocaleString() 
+                                          : typeof item.precio === 'number'
+                                            ? item.precio.toLocaleString()
+                                            : typeof item.precio === 'string'
+                                              ? parseFloat(item.precio).toLocaleString()
+                                              : "0"}
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              
+              {completedQuotes.length === 0 && (
+                <div className="flex flex-col items-center justify-center py-8 px-4 text-center">
+                  <div className="bg-green-50 p-3 rounded-full mb-2">
+                    <CheckCircle className="h-6 w-6 text-green-500" />
+                  </div>
+                  <h3 className="text-sm font-medium text-gray-900 mb-1">No hay pedidos completados</h3>
+                  <p className="text-xs text-gray-500 max-w-md">
+                    Los pedidos marcados como entregados aparecerán aquí como un historial de trabajos completados.
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+        
+        {/* Solicitudes Pendientes - Diseño mejorado */}
+        <Card className="rounded-xl overflow-hidden border-none shadow-lg bg-white mt-4">
+          <CardHeader className="bg-gradient-to-r from-blue-50 to-blue-100 p-3 sm:p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-lg font-bold text-blue-900">Solicitudes Pendientes</CardTitle>
+                <CardDescription className="text-blue-600 text-xs">
+                  Cotiza rápidamente y aumenta tus posibilidades de ganar el trabajo
+                </CardDescription>
+              </div>
+              <Button
+                onClick={() => setShowAllPendingQuotes(!showAllPendingQuotes)}
+                className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white text-xs px-2 py-1 sm:px-3 sm:py-2 rounded-lg shadow-md h-auto"
+                size="sm"
+              >
+                {showAllPendingQuotes ? "Mostrar menos" : "Ver todas"}
+                <ArrowRight className="ml-1 h-3 w-3" />
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="p-0">
+            {pendingQuotes && pendingQuotes.length > 0 ? (
+              <div className="divide-y divide-blue-100">
+                {(showAllPendingQuotes ? pendingQuotes : pendingQuotes.slice(0, 5)).map((quote) => (
+                  <div
+                    key={quote.id}
+                    className="p-3 hover:bg-blue-50/50 transition-colors cursor-pointer relative group shadow-sm hover:shadow-md border border-transparent hover:border-blue-200 rounded-md"
+                    onClick={() => navigate(`/backoffice/order-tracking?id=${quote.id}`)}
+                    title="Click para ver detalles de la solicitud"
+                  >
+                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                      <Info className="h-4 w-4 text-blue-600" />
+                    </div>
+                    <div className="flex flex-col">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-2">
+                        <div>
+                          <h3 className="font-semibold text-sm text-gray-900 truncate max-w-[250px]">
+                            {quote.title || quote.requestTitle || "Solicitud de Cotización"}
+                          </h3>
+                          <p className="text-xs text-gray-500 mb-1">
+                            Cliente: {quote.clientName || quote.userId || "Cliente"}
+                          </p>
+                          <div className="flex flex-wrap gap-1 mb-2">
+                            <Badge variant="outline" className="text-xs px-1.5 py-0.5 bg-blue-50 text-blue-700 border-blue-200">
+                              {quote.category || "Sin categoría"}
+                            </Badge>
+                            {quote.urgency && (
+                              <Badge variant="outline" className={`text-xs px-1.5 py-0.5 
+                                ${quote.urgency === "high" 
+                                  ? "bg-red-50 text-red-700 border-red-200" 
+                                  : quote.urgency === "medium" 
+                                    ? "bg-amber-50 text-amber-700 border-amber-200" 
+                                    : "bg-green-50 text-green-700 border-green-200"}`}>
+                                {quote.urgency === "high" ? "Urgente" : quote.urgency === "medium" ? "Normal" : "Baja"}
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                        <div className="mt-2 sm:mt-0 text-xs text-gray-500">
+                          <span className="flex items-center bg-green-50 text-green-700 px-2 py-1 rounded-full font-medium mb-1">
+                            <DollarSign className="h-3 w-3 mr-1" />
+                            ${
+                              // Intentamos mostrar el monto total de distintas maneras
+                              quote.totalAmount 
+                                ? quote.totalAmount.toLocaleString() 
+                                : quote.amount 
+                                  ? quote.amount.toLocaleString() 
+                                  : quote.total 
+                                    ? quote.total.toLocaleString()
+                                    : quote.budget
+                                      ? quote.budget.toLocaleString()
+                                      : (quote.products && quote.products.length > 0)
+                                        ? calculateTotal(quote.products).toLocaleString()
+                                        : (quote.items && quote.items.length > 0)
+                                          ? calculateTotal(quote.items).toLocaleString()
+                                          : "Por determinar"
+                            }
+                          </span>
+                          <span className="block sm:inline-block">
+                            Fecha: {new Date(quote.createdAt || Date.now()).toLocaleDateString()}
+                          </span>
+                        </div>
+                      </div>
+                      
+                      {/* Productos asociados */}
+                      {(quote.products && quote.products.length > 0) ? (
+                        <div className="mt-2 mb-3">
+                          <p className="text-xs font-medium text-gray-700 mb-2 flex items-center">
+                            <Package className="h-3.5 w-3.5 mr-1.5 text-blue-600" />
+                            Productos solicitados:
+                          </p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 overflow-x-auto">
+                            {quote.products.map((product, idx) => (
+                              <div key={idx} className="flex items-center bg-white p-2 rounded-lg border border-blue-100 shadow-sm hover:shadow-md transition-all duration-200">
+                                {(product.image || product.imageUrl || product.img) ? (
+                                  <img 
+                                    src={product.image || product.imageUrl || product.img} 
+                                    alt={product.name} 
+                                    className="h-12 w-12 object-cover rounded-md mr-3 border border-gray-200"
+                                    onError={(e) => {
+                                      e.currentTarget.onerror = null;
+                                      e.currentTarget.src = "/placeholder.svg";
+                                    }}
+                                  />
+                                ) : (
+                                  <div className="h-12 w-12 bg-gray-100 rounded-md mr-3 flex items-center justify-center">
+                                    <Package className="h-6 w-6 text-gray-400" />
+                                  </div>
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium text-gray-800 truncate">{product.name}</p>
+                                  <div className="flex items-center justify-between mt-1">
+                                    <p className="text-xs text-gray-500">
+                                      Cant: {product.quantity || product.cantidad || 1}
+                                    </p>
+                                    <p className="text-xs font-medium bg-green-50 text-green-700 px-2 py-0.5 rounded-full flex items-center">
+                                      <DollarSign className="h-3 w-3 mr-0.5" />
+                                      {typeof product.price === 'number' 
+                                        ? product.price.toLocaleString() 
+                                        : typeof product.price === 'string' 
+                                          ? parseFloat(product.price).toLocaleString() 
+                                          : typeof product.precio === 'number'
+                                            ? product.precio.toLocaleString()
+                                            : typeof product.precio === 'string'
+                                              ? parseFloat(product.precio).toLocaleString()
+                                              : "0"}
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : quote.items && quote.items.length > 0 ? (
+                        <div className="mt-2 mb-3">
+                          <p className="text-xs font-medium text-gray-700 mb-2 flex items-center">
+                            <Package className="h-3.5 w-3.5 mr-1.5 text-blue-600" />
+                            Productos solicitados:
+                          </p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 overflow-x-auto">
+                            {quote.items.map((item, idx) => (
+                              <div key={idx} className="flex items-center bg-white p-2 rounded-lg border border-blue-100 shadow-sm hover:shadow-md transition-all duration-200">
+                                {(item.image || item.imageUrl || item.img) ? (
+                                  <img 
+                                    src={item.image || item.imageUrl || item.img} 
+                                    alt={item.name} 
+                                    className="h-12 w-12 object-cover rounded-md mr-3 border border-gray-200"
+                                    onError={(e) => {
+                                      e.currentTarget.onerror = null;
+                                      e.currentTarget.src = "/placeholder.svg";
+                                    }}
+                                  />
+                                ) : (
+                                  <div className="h-12 w-12 bg-gray-100 rounded-md mr-3 flex items-center justify-center">
+                                    <Package className="h-6 w-6 text-gray-400" />
+                                  </div>
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium text-gray-800 truncate">{item.name}</p>
+                                  <div className="flex items-center justify-between mt-1">
+                                    <p className="text-xs text-gray-500">
+                                      Cant: {item.quantity || item.cantidad || 1}
+                                    </p>
+                                    <p className="text-xs font-medium bg-green-50 text-green-700 px-2 py-0.5 rounded-full flex items-center">
+                                      <DollarSign className="h-3 w-3 mr-0.5" />
+                                      {typeof item.price === 'number' 
+                                        ? item.price.toLocaleString() 
+                                        : typeof item.price === 'string' 
+                                          ? parseFloat(item.price).toLocaleString() 
+                                          : typeof item.precio === 'number'
+                                            ? item.precio.toLocaleString()
+                                            : typeof item.precio === 'string'
+                                              ? parseFloat(item.precio).toLocaleString()
+                                              : "0"}
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                      
+                      {/* Botones de acción */}
+                      <div className="flex flex-col sm:flex-row gap-2 mt-3">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="bg-white border-gray-200 text-red-600 hover:bg-red-50 hover:text-red-700 hover:border-red-200 text-xs font-medium px-3 py-2 h-auto rounded-lg w-full sm:w-auto flex items-center justify-center transition-all duration-200"
+                          onClick={() => handleDenyQuote(quote.id)}
+                          disabled={isProcessing}
+                        >
+                          <X className="h-3.5 w-3.5 mr-1.5" />
+                          Rechazar
+                        </Button>
+                        <Button
+                          size="sm"
+                          className="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white text-xs font-medium px-4 py-2 h-auto rounded-lg shadow-md hover:shadow-lg w-full sm:w-auto flex items-center justify-center transition-all duration-200 border-none relative overflow-hidden group"
+                          onClick={() => handleConfirmQuote(quote.id)}
+                          disabled={isProcessing}
+                        >
+                          <span className="absolute inset-0 w-full h-full bg-gradient-to-r from-green-400 to-green-500 opacity-0 group-hover:opacity-10 transition-opacity duration-300"></span>
+                          <Check className="h-3.5 w-3.5 mr-2 transition-transform group-hover:scale-110" />
+                          <span className="relative z-10">Aceptar</span>
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-8 px-4 text-center">
+                <div className="bg-blue-50 p-3 rounded-full mb-2">
+                  <FileText className="h-6 w-6 text-blue-500" />
+                </div>
+                <h3 className="text-sm font-medium text-gray-900 mb-1">No hay solicitudes pendientes</h3>
+                <p className="text-xs text-gray-500 max-w-md">
+                  Todas las solicitudes han sido procesadas. Las nuevas solicitudes aparecerán aquí cuando los clientes te seleccionen.
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+      
+    </DashboardLayout>
+  );
+};
+
+export default DashboardEmpresas;

@@ -1,6 +1,6 @@
 
 <!DOCTYPE html>
-<html lang="es">
+<html lang="es" class="theme-transition">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -18,14 +18,62 @@
     <meta name="twitter:image" content="https://lovable.dev/opengaph-image-p98pqg.png" />
     
     <!-- PWA Meta Tags -->
-    <meta name="theme-color" content="#0ea5e9" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f9fafb" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#111827" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Ferry" />
+    
+    <style>
+      /* Estilos iniciales para prevenir parpadeo */
+      html.theme-transition,
+      html.theme-transition *,
+      html.theme-transition *:before,
+      html.theme-transition *:after {
+        transition: all 0s !important;
+        transition-delay: 0s !important;
+      }
+      
+      /* Estilo por defecto para el tema oscuro */
+      html.dark body {
+        background-color: #111827 !important;
+        color: #f3f4f6 !important;
+      }
+      
+      /* Asegurar que el cuerpo tenga el fondo apropiado */
+      body {
+        margin: 0;
+        min-height: 100vh;
+      }
+      
+      /* Contenedor root ocupa toda la altura */
+      #root {
+        min-height: 100vh;
+      }
+    </style>
   </head>
 
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    
+    <!-- Script para detectar tema al cargar la página, antes de React -->
+    <script>
+      // Función para verificar si debemos usar tema oscuro
+      const shouldUseDarkMode = () => {
+        const savedTheme = localStorage.getItem('theme');
+        if (savedTheme === 'dark') return true;
+        if (savedTheme === 'light') return false;
+        return window.matchMedia('(prefers-color-scheme: dark)').matches;
+      };
+      
+      // Aplicar tema inmediatamente para evitar parpadeo
+      if (shouldUseDarkMode()) {
+        document.documentElement.classList.add('dark');
+        document.body.classList.add('dark-mode');
+        document.body.style.backgroundColor = '#111827';
+        document.body.style.color = '#f3f4f6';
+      }
+    </script>
   </body>
 </html>

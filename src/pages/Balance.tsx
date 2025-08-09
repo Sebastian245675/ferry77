@@ -1,23 +1,19 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Navbar from '../components/Navbar';
 import BottomNavigation from '../components/BottomNavigation';
-import { Wallet, CreditCard, DollarSign, TrendingUp, History, Plus, Minus, ArrowUpRight, ArrowDownLeft } from 'lucide-react';
+import { Wallet, CreditCard, DollarSign, TrendingUp, History, Plus, Minus, ArrowUpRight, ArrowDownLeft, Store, Info } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
-
-interface Transaction {
-  id: string;
-  type: 'deposit' | 'withdrawal' | 'payment' | 'refund';
-  amount: number;
-  description: string;
-  date: string;
-  status: 'completed' | 'pending' | 'failed';
-}
+import { collection, query, where, getDocs, getDoc, doc, Timestamp } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
+import { getAuth } from 'firebase/auth';
+import { Transaction } from '@/lib/models';
+import { useNavigate } from 'react-router-dom';
 
 interface PaymentMethod {
   id: string;
@@ -31,53 +27,22 @@ const Balance = () => {
   const [rechargeAmount, setRechargeAmount] = useState('');
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>('');
   const { toast } = useToast();
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const navigate = useNavigate();
 
-  const currentBalance = 15750;
-  const pendingAmount = 2500;
-  const totalSpent = 125000;
-
-  const transactions: Transaction[] = [
-    {
-      id: '1',
-      type: 'deposit',
-      amount: 20000,
-      description: 'Recarga con tarjeta terminada en 1234',
-      date: '2024-01-15',
-      status: 'completed'
-    },
-    {
-      id: '2',
-      type: 'payment',
-      amount: -12500,
-      description: 'Pago a Ferretería Central - Pedido ORD-001',
-      date: '2024-01-14',
-      status: 'completed'
-    },
-    {
-      id: '3',
-      type: 'refund',
-      amount: 3200,
-      description: 'Reembolso por cancelación - Pedido ORD-003',
-      date: '2024-01-13',
-      status: 'completed'
-    },
-    {
-      id: '4',
-      type: 'payment',
-      amount: -8500,
-      description: 'Pago a ToolMaster Pro - Pedido ORD-002',
-      date: '2024-01-12',
-      status: 'completed'
-    },
-    {
-      id: '5',
-      type: 'deposit',
-      amount: 15000,
-      description: 'Recarga con transferencia bancaria',
-      date: '2024-01-10',
-      status: 'pending'
-    }
-  ];
+  // Estados dinámicos para los balances
+  const [currentBalance, setCurrentBalance] = useState(15750);
+  const [pendingAmount, setPendingAmount] = useState(2500);
+  const [totalSpent, setTotalSpent] = useState(125000);
+  
+  // Estadísticas adicionales
+  const [stats, setStats] = useState({
+    totalRequests: 0,
+    totalCompanies: 0,
+    totalSavings: 0,
+    recentActivity: ''
+  });
 
   const paymentMethods: PaymentMethod[] = [
     {
@@ -117,6 +82,229 @@ const Balance = () => {
     }
   ];
 
+  // Cargar las cotizaciones aceptadas
+  useEffect(() => {
+    const loadTransactionHistory = async () => {
+      try {
+        setIsLoading(true);
+        const auth = getAuth();
+        const user = auth.currentUser;
+        
+        if (!user) {
+          console.log("Usuario no autenticado");
+          setIsLoading(false);
+          return;
+        }
+        
+        // Array para almacenar todas las transacciones
+        const allTransactions: Transaction[] = [];
+        
+        // 1. BUSCAR SOLICITUDES GUARDADAS (Nueva implementación con el formato mejorado)
+        const requestsQuery = query(
+          collection(db, "solicitud"),
+          where("userId", "==", user.uid)
+        );
+        
+        const requestsSnapshot = await getDocs(requestsQuery);
+        console.log(`[Balance] Encontradas ${requestsSnapshot.docs.length} solicitudes del usuario`);
+        
+        for (const requestSnap of requestsSnapshot.docs) {
+          const requestData = requestSnap.data();
+          // Verificar si la solicitud tiene totalAmount o calcular desde autoQuotes
+          let totalAmount = requestData.totalAmount || 0;
+          // Si no hay totalAmount pero hay autoQuotes, calcular el total
+          if (!totalAmount && requestData.autoQuotes && Array.isArray(requestData.autoQuotes)) {
+            totalAmount = requestData.autoQuotes
+              .filter(quote => quote.bestPrice && !isNaN(quote.bestPrice) && !quote.notFound)
+              .reduce((total, quote) => total + Number(quote.bestPrice) * (quote.quantity || 1), 0);
+          }
+          if (totalAmount > 0) {
+            // Obtener detalles de empresas para mostrar información más rica
+            const companyDetails = [];
+            if (requestData.selectedCompanies && Array.isArray(requestData.selectedCompanies)) {
+              requestData.selectedCompanies.forEach(company => {
+                companyDetails.push({
+                  name: company.companyName || "Empresa",
+                  id: company.id || company.companyId,
+                  logo: company.companyLogo || null
+                });
+              });
+            }
+            // Crear objeto de transacción con datos enriquecidos
+            const transaction: Transaction = {
+              id: requestSnap.id,
+              type: 'request',
+              amount: -Math.abs(totalAmount),
+              description: `Solicitud de ${requestData.items?.length || 0} productos`,
+              date: requestData.acceptedAt || requestData.createdAt 
+                ? new Date(requestData.acceptedAt || requestData.createdAt).toISOString().split('T')[0]
+                : new Date().toISOString().split('T')[0],
+              status: requestData.status || 'activo',
+              requestName: requestData.title || 'Solicitud sin título',
+              requestId: requestSnap.id,
+              items: requestData.items || [],
+              companies: companyDetails,
+              savings: requestData.savings || 0,
+              statusLabel: getStatusLabel(requestData.status)
+            };
+            allTransactions.push(transaction);
+          }
+        }
+        
+        // 2. BUSCAR COTIZACIONES TRADICIONALES
+        const quotesQuery = query(
+          collection(db, "cotizaciones"),
+          where("status", "in", ["recibida", "accepted", "confirmado"])
+        );
+        
+        const quotesSnapshot = await getDocs(quotesQuery);
+        console.log(`[Balance] Encontradas ${quotesSnapshot.docs.length} cotizaciones en estado recibida/accepted/confirmado`);
+        
+        for (const quoteSnap of quotesSnapshot.docs) {
+          const quoteData = quoteSnap.data();
+          // Verificar si la cotización pertenece al usuario actual
+          const belongsToUser = 
+            (quoteData.userId && quoteData.userId === user.uid) || 
+            (quoteData.clientId && quoteData.clientId === user.uid) ||
+            (quoteData.buyerId && quoteData.buyerId === user.uid);
+          if (belongsToUser && quoteData.totalAmount) {
+            // Buscar información de la solicitud si está disponible
+            let requestData = null;
+            if (quoteData.requestId) {
+              try {
+                const requestDoc = await getDoc(doc(db, "solicitud", quoteData.requestId));
+                if (requestDoc.exists()) {
+                  requestData = requestDoc.data();
+                }
+              } catch (error) {
+                console.error(`[Balance] Error al obtener solicitud ${quoteData.requestId}:`, error);
+              }
+            }
+            // Crear objeto de transacción
+            allTransactions.push({
+              id: quoteSnap.id,
+              type: 'quote',
+              amount: -Math.abs(quoteData.totalAmount),
+              description: quoteData.description || `Cotización ${quoteData.companyName ? 'de ' + quoteData.companyName : ''}`,
+              date: quoteData.createdAt 
+                ? typeof quoteData.createdAt === 'string'
+                  ? new Date(quoteData.createdAt).toISOString().split('T')[0]
+                  : new Date(quoteData.createdAt.seconds * 1000).toISOString().split('T')[0]
+                : new Date().toISOString().split('T')[0],
+              status: quoteData.status,
+              requestName: requestData?.title || 'Cotización',
+              requestId: quoteData.requestId || '',
+              companyName: quoteData.companyName || '',
+              companyLogo: quoteData.companyLogo || null,
+              statusLabel: getStatusLabel(quoteData.status)
+            });
+          }
+        }
+        
+        // Ordenar todas las transacciones por fecha más reciente
+        allTransactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        
+        // Actualizar el estado
+        setTransactions(allTransactions);
+        
+        // Calcular saldos actualizados basados en transacciones
+        calculateBalances(allTransactions);
+        
+      } catch (error) {
+        console.error("Error al cargar historial de transacciones:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    // Función auxiliar para obtener etiquetas descriptivas de estado
+    const getStatusLabel = (status: string): string => {
+      switch (status?.toLowerCase()) {
+        case 'cotizando':
+          return 'En cotización';
+        case 'recibida':
+          return 'Cotización recibida';
+        case 'accepted':
+          return 'Aceptada';
+        case 'confirmado':
+          return 'Confirmada';
+        case 'completado':
+        case 'completed':
+          return 'Completada';
+        case 'cancelado':
+          return 'Cancelada';
+        default:
+          return 'Activa';
+      }
+    };
+    
+    // Función para calcular saldos actualizados
+    const calculateBalances = (transactions: Transaction[]) => {
+      let spent = 0;
+      let pending = 0;
+      let totalSavings = 0;
+      let totalRequests = 0;
+      
+      // Set para almacenar compañías únicas
+      const uniqueCompanies = new Set<string>();
+      
+      // Fecha más reciente para la última actividad
+      let mostRecentDate = new Date(0); // Fecha antigua como punto de partida
+      let recentActivity = '';
+      
+      transactions.forEach(tx => {
+        // Contar solicitudes únicas
+        if (tx.requestId) {
+          totalRequests++;
+        }
+        
+        // Contar empresas únicas
+        if (tx.companies && Array.isArray(tx.companies)) {
+          tx.companies.forEach(company => {
+            if (company.id) uniqueCompanies.add(company.id);
+          });
+        }
+        
+        // Sumar ahorros
+        if (tx.savings && tx.savings > 0) {
+          totalSavings += tx.savings;
+        }
+        
+        // Actualizar última actividad
+        const txDate = new Date(tx.date);
+        if (txDate > mostRecentDate) {
+          mostRecentDate = txDate;
+          recentActivity = tx.requestName || tx.description;
+        }
+        
+        // Solo contar transacciones con monto negativo (gastos)
+        if (tx.amount < 0) {
+          if (['completed', 'confirmado', 'completado'].includes(tx.status?.toLowerCase())) {
+            spent += Math.abs(tx.amount);
+          } else if (['cotizando', 'recibida', 'accepted', 'pending'].includes(tx.status?.toLowerCase())) {
+            pending += Math.abs(tx.amount);
+          }
+        }
+      });
+      
+      // Actualizar estados
+      setTotalSpent(spent);
+      setPendingAmount(pending);
+      
+      // Actualizar estadísticas adicionales
+      setStats({
+        totalRequests,
+        totalCompanies: uniqueCompanies.size,
+        totalSavings,
+        recentActivity: recentActivity ? 
+          (recentActivity.length > 20 ? recentActivity.substring(0, 20) + '...' : recentActivity) 
+          : 'Sin actividad reciente'
+      });
+    };
+    
+    loadTransactionHistory();
+  }, []);
+
   const quickAmounts = [5000, 10000, 20000, 50000];
 
   const getTransactionIcon = (type: string) => {
@@ -125,6 +313,7 @@ const Balance = () => {
       case 'payment': return <ArrowDownLeft className="w-4 h-4 text-red-600" />;
       case 'withdrawal': return <ArrowDownLeft className="w-4 h-4 text-red-600" />;
       case 'refund': return <ArrowUpRight className="w-4 h-4 text-blue-600" />;
+      case 'quote': return <ArrowDownLeft className="w-4 h-4 text-red-600" />;
       default: return <DollarSign className="w-4 h-4 text-gray-600" />;
     }
   };
@@ -136,6 +325,7 @@ const Balance = () => {
         return 'text-green-600';
       case 'payment':
       case 'withdrawal':
+      case 'quote':
         return 'text-red-600';
       default:
         return 'text-gray-600';
@@ -236,6 +426,60 @@ const Balance = () => {
                 </div>
               </CardContent>
             </Card>
+          </div>
+          
+          {/* Estadísticas avanzadas */}
+          <div className="mb-6">
+            <h2 className="text-lg font-bold text-gray-900 mb-3">Estadísticas de Compras</h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <Card>
+                <CardContent className="p-4">
+                  <div className="flex flex-col items-center text-center">
+                    <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center mb-2">
+                      <Store className="w-5 h-5 text-blue-600" />
+                    </div>
+                    <p className="text-2xl font-bold text-gray-800">{stats.totalCompanies}</p>
+                    <p className="text-xs text-gray-600">Empresas</p>
+                  </div>
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardContent className="p-4">
+                  <div className="flex flex-col items-center text-center">
+                    <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center mb-2">
+                      <TrendingUp className="w-5 h-5 text-green-600" />
+                    </div>
+                    <p className="text-2xl font-bold text-gray-800">${stats.totalSavings.toLocaleString()}</p>
+                    <p className="text-xs text-gray-600">Ahorrado</p>
+                  </div>
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardContent className="p-4">
+                  <div className="flex flex-col items-center text-center">
+                    <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center mb-2">
+                      <Info className="w-5 h-5 text-purple-600" />
+                    </div>
+                    <p className="text-2xl font-bold text-gray-800">{stats.totalRequests}</p>
+                    <p className="text-xs text-gray-600">Solicitudes</p>
+                  </div>
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardContent className="p-4">
+                  <div className="flex flex-col items-center text-center">
+                    <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center mb-2">
+                      <History className="w-5 h-5 text-amber-600" />
+                    </div>
+                    <p className="text-sm font-medium text-gray-800">{stats.recentActivity || "Sin actividad"}</p>
+                    <p className="text-xs text-gray-600">Última actividad</p>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           </div>
 
           <Tabs defaultValue="recharge" className="space-y-6">
@@ -356,41 +600,97 @@ const Balance = () => {
                 <CardHeader>
                   <CardTitle className="flex items-center space-x-2">
                     <History className="w-5 h-5" />
-                    <span>Historial de Transacciones</span>
+                    <span>Historial de Solicitudes y Cotizaciones</span>
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-3">
-                    {transactions.map(transaction => (
-                      <div
-                        key={transaction.id}
-                        className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50 transition-colors"
-                      >
-                        <div className="flex items-center space-x-3">
-                          <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center">
-                            {getTransactionIcon(transaction.type)}
+                  {isLoading ? (
+                    <div className="flex justify-center items-center py-8">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                      <span className="ml-3 text-gray-600">Cargando historial...</span>
+                    </div>
+                  ) : transactions.length > 0 ? (
+                    <div className="divide-y border-t border-b">
+                      {transactions
+                        .filter(transaction => (transaction.type === 'quote' || transaction.type === 'request') && transaction.amount < 0)
+                        .map(transaction => (
+                          <div
+                            key={transaction.id}
+                            className="border-b py-3 px-2 hover:bg-gray-50"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center">
+                                {getTransactionIcon(transaction.type)}
+                                <div className="ml-2">
+                                  <div className="flex items-center">
+                                    <span className="font-medium text-gray-900">{transaction.requestName}</span>
+                                    <span className="text-red-600 font-medium ml-2">-${Math.abs(transaction.amount).toLocaleString()}</span>
+                                  </div>
+                                  <div className="flex items-center text-sm text-gray-600">
+                                    <span>{new Date(transaction.date).toLocaleDateString('es-AR', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                                    <span className="mx-1">•</span>
+                                    <Badge className="text-xs" variant="outline">{transaction.statusLabel || 'Completado'}</Badge>
+                                  </div>
+                                </div>
+                              </div>
+                              <Button 
+                                variant="ghost" 
+                                size="sm"
+                                className="text-xs"
+                                onClick={() => navigate(`/requests?highlight=${transaction.requestId}`)}
+                              >
+                                Ver
+                              </Button>
+                            </div>
+                            
+                            {/* Companies in simple list format */}
+                            {transaction.companies && transaction.companies.length > 0 && (
+                              <div className="ml-6 mt-1 text-sm text-gray-700">
+                                <span className="text-gray-500">Empresas: </span>
+                                {transaction.companies.map((company, idx) => (
+                                  <span key={idx} className="text-gray-700">
+                                    {idx > 0 ? ', ' : ''}
+                                    {company.name}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                            
+                            {/* Products count */}
+                            {transaction.items && transaction.items.length > 0 && (
+                              <div className="ml-6 text-sm text-gray-700">
+                                <span className="text-gray-500">Productos: </span>
+                                <span>{transaction.items.length}</span>
+                              </div>
+                            )}
+                            
+                            {/* Savings if available */}
+                            {transaction.savings > 0 && (
+                              <div className="ml-6 text-sm text-green-600">
+                                Ahorro: ${transaction.savings.toLocaleString()}
+                              </div>
+                            )}
                           </div>
-                          <div>
-                            <h3 className="font-medium">{transaction.description}</h3>
-                            <p className="text-sm text-gray-600">
-                              {new Date(transaction.date).toLocaleDateString('es-AR')}
-                            </p>
-                          </div>
-                        </div>
-                        
-                        <div className="text-right">
-                          <p className={`font-semibold ${getTransactionColor(transaction.type)}`}>
-                            {transaction.amount > 0 ? '+' : ''}${Math.abs(transaction.amount).toLocaleString()}
-                          </p>
-                          <Badge className={getStatusColor(transaction.status)}>
-                            {transaction.status === 'completed' && 'Completado'}
-                            {transaction.status === 'pending' && 'Pendiente'}
-                            {transaction.status === 'failed' && 'Fallido'}
-                          </Badge>
-                        </div>
+                        ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-12">
+                      <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <History className="w-8 h-8 text-gray-400" />
                       </div>
-                    ))}
-                  </div>
+                      <h3 className="text-lg font-medium text-gray-900 mb-2">No hay transacciones</h3>
+                      <p className="text-gray-600 max-w-md mx-auto">
+                        Cuando realices solicitudes o aceptes cotizaciones, aparecerán aquí con sus detalles y montos.
+                      </p>
+                      <Button 
+                        className="mt-4" 
+                        variant="outline"
+                        onClick={() => navigate('/requests/new')}
+                      >
+                        Crear nueva solicitud
+                      </Button>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </TabsContent>

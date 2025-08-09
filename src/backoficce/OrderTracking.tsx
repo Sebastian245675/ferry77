@@ -38,7 +38,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { toast } from "@/components/ui/use-toast";
+import { toast } from "@/hooks/use-toast";
 
 const OrderTracking = () => {
   const navigate = useNavigate();
@@ -148,27 +148,25 @@ const OrderTracking = () => {
           if (docSnap.exists()) {
             console.log(`Documento encontrado en '${collection}', procediendo con la actualización`);
             
-            // Actualizar el estado en Firestore
-            await updateDoc(docRef, {
+            // Crear objeto de actualización para evitar múltiples llamadas a updateDoc
+            const updateData = {
               deliveryStatus: currentStatus,
               statusNote: statusNote,
               statusUpdatedAt: new Date(),
-            });
+            };
+            
+            // Si el estado es "entregado", actualizar también el campo status para que
+            // no aparezca en las solicitudes pendientes
+            if (currentStatus === "entregado") {
+              updateData["status"] = "entregado";
+              console.log("Actualizando estado principal a 'entregado'");
+            }
+            
+            // Actualizar todo de una vez
+            await updateDoc(docRef, updateData);
             
             console.log(`Actualización exitosa en '${collection}'`);
             updateSuccess = true;
-            
-            // Si el estado es "entregado", actualizar también el estado general
-            if (currentStatus === "entregado") {
-              try {
-                await updateDoc(docRef, {
-                  status: "completado"
-                });
-                console.log("Estado general actualizado a 'completado'");
-              } catch (innerError) {
-                console.warn("No se pudo actualizar el estado general:", innerError);
-              }
-            }
             
             break; // Salir del bucle si la actualización fue exitosa
           } else {
@@ -543,10 +541,25 @@ const OrderTracking = () => {
               <CardFooter>
                 <Button
                   variant="outline"
-                  className="w-full"
-                  onClick={() => navigate(`/messages?clientId=${orderDetails?.userId}`)}
+                  className="w-full hover:bg-blue-50 text-blue-600 border-blue-200 hover:border-blue-300 transition-colors group"
+                  onClick={() => {
+                    // Usar el clientId o userId según esté disponible en los detalles
+                    const clientId = orderDetails?.clientId || orderDetails?.userId;
+                    console.log("🔍 Navegando a chat con cliente ID:", clientId);
+                    
+                    if (clientId) {
+                      navigate(`/backoffice/messages?clientId=${clientId}`);
+                    } else {
+                      console.error("⚠️ No se encontró ID de cliente en los detalles del pedido");
+                      toast({
+                        title: "Error",
+                        description: "No se pudo identificar al cliente para iniciar el chat",
+                        variant: "destructive"
+                      });
+                    }
+                  }}
                 >
-                  <MessageSquare className="h-4 w-4 mr-2" />
+                  <MessageSquare className="h-4 w-4 mr-2 group-hover:scale-110 transition-transform" />
                   Contactar Cliente
                 </Button>
               </CardFooter>

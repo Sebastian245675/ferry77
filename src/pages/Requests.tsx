@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { getAuth } from "firebase/auth";
-import { collection, query, where, getDocs, onSnapshot, updateDoc, doc, addDoc } from "firebase/firestore";
+import { collection, query, where, getDocs, onSnapshot, updateDoc, doc, addDoc, getDoc } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import Navbar from '../components/Navbar';
 import BottomNavigation from '../components/BottomNavigation';
@@ -53,7 +53,7 @@ interface UserRequest {
   location: string;
   urgency: 'baja' | 'media' | 'alta' | string;
   budget: number;
-  status: 'pendiente' | 'confirmado' | 'cotizando' | 'completado' | 'cancelado' | string;
+  status: 'pendiente' | 'confirmado' | 'cotizando' | 'completado' | 'entregado' | 'cancelado' | string;
   createdAt: string | any;
   quotesCount: number;
   // Campos adicionales específicos de UserRequest
@@ -110,7 +110,11 @@ function debugSavingsInfo(request: any) {
   return request.savings || 0;
 }
 
+
+
 const Requests = () => {
+  // Estado para mostrar detalles expandidos por solicitud
+  const [expandedDetails, setExpandedDetails] = useState<{ [key: string]: boolean }>({});
   const [activeTab, setActiveTab] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [requests, setRequests] = useState<UserRequest[]>([]);
@@ -125,6 +129,15 @@ const Requests = () => {
   const [autoQuoteRequest, setAutoQuoteRequest] = useState<UserRequest | null>(null);
   // Agregar debug mode para verificar ahorros
   const [showDebugInfo, setShowDebugInfo] = useState(false);
+  // Estado para el modal de reportar pedido
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportReason, setReportReason] = useState('');
+  const [reportDetails, setReportDetails] = useState('');
+  const [reportingRequest, setReportingRequest] = useState<UserRequest | null>(null);
+  // Estado para pedidos reportados
+  const [reportedRequests, setReportedRequests] = useState<string[]>([]);
+  // Estado para mostrar mensaje de éxito
+  const [showSuccessMessage, setShowSuccessMessage] = useState(false);
 
   // Detect autoQuoteId in URL
   const location = useLocation();
@@ -195,6 +208,68 @@ const Requests = () => {
     }
   }
 
+  // Función para manejar el reporte de un pedido
+  const handleReportRequest = async () => {
+    if (!reportingRequest || !reportReason) return;
+    
+    try {
+      const auth = getAuth();
+      const user = auth.currentUser;
+      
+      if (!user) {
+        alert('Debes iniciar sesión para reportar un pedido');
+        return;
+      }
+      
+      // Obtener información de la empresa asignada si existe
+      let companyInfo = null;
+      if (reportingRequest.selectedCompanies && reportingRequest.selectedCompanies.length > 0) {
+        companyInfo = {
+          id: reportingRequest.selectedCompanies[0].companyId,
+          name: reportingRequest.selectedCompanies[0].companyName || reportingRequest.selectedCompanies[0].name,
+          logo: reportingRequest.selectedCompanies[0].companyLogo
+        };
+      }
+      
+      // Crear el reporte en Firestore
+      await addDoc(collection(db, 'reportes'), {
+        requestId: reportingRequest.id,
+        requestTitle: reportingRequest.title,
+        userId: user.uid,
+        userEmail: user.email,
+        userName: user.displayName,
+        reason: reportReason,
+        details: reportDetails,
+        company: companyInfo,
+        status: 'pendiente',
+        createdAt: new Date().toISOString(),
+        items: reportingRequest.items
+      });
+      
+      // Actualizar la lista de pedidos reportados
+      setReportedRequests(prev => [...prev, reportingRequest.id]);
+      
+      // Cerrar el modal de reporte
+      setShowReportModal(false);
+      
+      // Mostrar mensaje de éxito
+      setShowSuccessMessage(true);
+      
+      // Ocultar mensaje de éxito después de unos segundos
+      setTimeout(() => {
+        setShowSuccessMessage(false);
+      }, 5000);
+      
+      // Limpiar los campos
+      setReportReason('');
+      setReportDetails('');
+      setReportingRequest(null);
+    } catch (error) {
+      console.error('Error al reportar pedido:', error);
+      alert('Ocurrió un error al enviar el reporte. Por favor, intenta de nuevo.');
+    }
+  };
+
   // Estado para controlar el modal de no hay más opciones
   const [showNoMoreOptionsModal, setShowNoMoreOptionsModal] = useState(false);
   
@@ -232,6 +307,18 @@ const Requests = () => {
         setAhorroTotal(0);
         setEnProceso(0);
         return;
+      }
+
+      // Obtener pedidos reportados por el usuario
+      try {
+        const reportesRef = collection(db, 'reportes');
+        const qReportes = query(reportesRef, where("userId", "==", user.uid));
+        const reportesSnapshot = await getDocs(qReportes);
+        const reportedIds = reportesSnapshot.docs.map(doc => doc.data().requestId);
+        setReportedRequests(reportedIds);
+        console.log("Pedidos reportados:", reportedIds);
+      } catch (error) {
+        console.error("Error al obtener pedidos reportados:", error);
       }
 
       let collectionName = "solicitud";
@@ -346,22 +433,62 @@ const Requests = () => {
 
   // Fetch comments from Firestore
   useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, "comments"), (snapshot) => {
+    // Función para obtener el nombre de usuario desde Firestore si está disponible
+    const getUserNameById = async (userId: string): Promise<string> => {
+      if (!userId) return "Usuario";
+      
+      try {
+        const userDoc = await getDoc(doc(db, 'users', userId));
+        if (userDoc.exists()) {
+          const userData = userDoc.data();
+          return userData.name || "Usuario";
+        }
+      } catch (err) {
+        console.error("Error obteniendo nombre de usuario:", err);
+      }
+      return "Usuario";
+    };
+    
+    const unsubscribe = onSnapshot(collection(db, "comments"), async (snapshot) => {
       const commentsData: { [key: string]: string[] } = {};
-
-      snapshot.docs.forEach((doc) => {
-        const data = doc.data();
+      const commentsToProcess = snapshot.docs.map(doc => ({
+        id: doc.id,
+        data: doc.data()
+      }));
+      
+      for (const docInfo of commentsToProcess) {
+        const data = docInfo.data;
         const requestId = data.requestId;
         const comment = data.comment;
+        let userName = data.userName; // Primero intentamos usar el userName guardado
+        
+        if (!userName && data.userId) {
+          // Si no hay userName pero sí hay userId, intentamos obtener el nombre desde Firestore
+          userName = await getUserNameById(data.userId);
+        }
+        
+        // En último caso usamos "Usuario" como valor predeterminado
+        if (!userName) userName = "Usuario";
+        
+        console.log("Comentario procesado:", {
+          id: docInfo.id,
+          requestId: requestId,
+          comentario: comment,
+          nombreUsuario: userName,
+          userId: data.userId
+        });
 
         if (requestId && comment) {
           if (!commentsData[requestId]) {
             commentsData[requestId] = [];
           }
-          commentsData[requestId].push(comment);
+          // Store the comment and username together with a separator
+          const commentWithUser = `${comment}:::${userName}`;
+          commentsData[requestId].push(commentWithUser);
         }
-      });
+      }
 
+      console.log("Estado final de comentarios:", commentsData);
       setComments(commentsData);
     });
 
@@ -377,6 +504,8 @@ const Requests = () => {
         return 'confirmado';
       case 'completed': 
         return 'completado';
+      case 'delivered': 
+        return 'entregado';
       default: 
         return null;
     }
@@ -388,6 +517,7 @@ const Requests = () => {
     { id: 'quoting', name: 'Cotizando', count: requests.filter(r => r.status === 'cotizando').length },
     { id: 'confirmed', name: 'Confirmadas', count: requests.filter(r => r.status === 'confirmado').length },
     { id: 'completed', name: 'Completadas', count: requests.filter(r => r.status === 'completado').length },
+    { id: 'delivered', name: 'Entregadas', count: requests.filter(r => r.status === 'entregado').length },
   ];
 
   const navigate = useNavigate();
@@ -402,13 +532,6 @@ const Requests = () => {
       );
       const cotizacionesSnapshot = await getDocs(cotizacionesQuery);
       
-      // Si no hay cotizaciones, siempre redirigir a la página de cotizaciones 
-      // para que el usuario pueda esperar ofertas
-      if (cotizacionesSnapshot.empty) {
-        navigate(`/quotes?requestId=${request.id}`);
-        return;
-      }
-      
       // Buscar si hay alguna cotización aceptada
       const acceptedQuoteQuery = query(
         cotizacionesRef,
@@ -417,27 +540,18 @@ const Requests = () => {
       );
       const acceptedQuoteSnapshot = await getDocs(acceptedQuoteQuery);
       
-      if (acceptedQuoteSnapshot.empty) {
-        // Si hay cotizaciones pero ninguna aceptada, ir a la página de cotizaciones 
-        // para que el usuario pueda ver y aceptar alguna
-        navigate(`/quotes?requestId=${request.id}`);
-        return;
-      }
-      
-      // Si hay cotización aceptada, obtener su ID
-      const cotizacionId = acceptedQuoteSnapshot.docs[0].id;
-      
-      // Si es confirmada o completada, ir a la página de seguimiento de orden
-      if (request.status === 'confirmado' || request.status === 'completado') {
-        navigate(`/order-status?id=${cotizacionId}`);
+      // Si hay cotización aceptada, navegar con su ID
+      if (!acceptedQuoteSnapshot.empty) {
+        const cotizacionId = acceptedQuoteSnapshot.docs[0].id;
+        navigate(`/tracking?id=${cotizacionId}`);
       } else {
-        // Para cualquier otro estado, ir a la página de cotizaciones
-        navigate(`/quotes?requestId=${request.id}`);
+        // Si no hay cotización aceptada, navegar con el ID de solicitud
+        navigate(`/tracking?requestId=${request.id}`);
       }
     } catch (error) {
       console.error("Error al manejar la navegación:", error);
-      // En caso de error, ir a la página de cotizaciones por defecto
-      navigate(`/quotes?requestId=${request.id}`);
+      // En caso de error, ir a la página de tracking por defecto con el ID de solicitud
+      navigate(`/tracking?requestId=${request.id}`);
     }
   };
 
@@ -445,16 +559,65 @@ const Requests = () => {
     if (!newComment[requestId]?.trim()) return;
 
     try {
+      // Get current user info
+      const auth = getAuth();
+      const user = auth.currentUser;
+      
+      if (!user) {
+        console.error("No hay usuario autenticado");
+        return;
+      }
+      
+      // Primero intentamos obtener el nombre del usuario desde Firestore para más precisión
+      let userName = "Usuario";
+      
+      try {
+        // Intentar obtener datos del usuario desde la colección 'users'
+        const userDoc = await getDoc(doc(db, 'users', user.uid));
+        if (userDoc.exists()) {
+          const userData = userDoc.data();
+          // Usar name si existe, o displayName como respaldo
+          userName = userData.name || user.displayName || "Usuario";
+          console.log("Nombre obtenido de Firestore:", userName);
+        } else {
+          // Si no hay datos en Firestore, usar displayName de auth
+          userName = user.displayName || "Usuario";
+          console.log("Nombre obtenido de Auth:", userName);
+        }
+      } catch (userError) {
+        console.error("Error obteniendo datos del usuario:", userError);
+        // En caso de error, usar displayName como respaldo
+        userName = user.displayName || "Usuario";
+      }
+      
+      console.log("Usuario final para el comentario:", {
+        uid: user.uid,
+        displayName: user.displayName,
+        nombreUsado: userName
+      });
+
       const commentRef = collection(db, "comments");
       await addDoc(commentRef, {
         requestId,
         comment: newComment[requestId],
+        userName: userName,
+        userId: user.uid,
         createdAt: new Date().toISOString(),
       });
 
+      // Update local comments state with the new comment including username
+      const commentWithUser = `${newComment[requestId]}:::${userName}`;
+      
+      console.log("Agregando comentario con usuario:", {
+        comentario: newComment[requestId],
+        nombreUsuario: userName,
+        comentarioCompleto: commentWithUser,
+        userId: user.uid
+      });
+      
       setComments((prev) => ({
         ...prev,
-        [requestId]: [...(prev[requestId] || []), newComment[requestId]],
+        [requestId]: [...(prev[requestId] || []), commentWithUser],
       }));
       setNewComment((prev) => ({ ...prev, [requestId]: "" }));
     } catch (error) {
@@ -800,6 +963,20 @@ const Requests = () => {
                 -ms-overflow-style: none;
                 scrollbar-width: none;
               }
+              @keyframes fadeIn {
+                from { opacity: 0; }
+                to { opacity: 1; }
+              }
+              .animate-fade-in {
+                animation: fadeIn 0.5s ease-out forwards;
+              }
+              @keyframes bounce {
+                0%, 100% { transform: translateY(0); }
+                50% { transform: translateY(-10px); }
+              }
+              .animate-bounce {
+                animation: bounce 1s ease infinite;
+              }
             `}</style>
           </div>
 
@@ -833,19 +1010,36 @@ const Requests = () => {
               }
 
               return (
-                <div key={request.id} className="bg-white rounded-xl shadow-md overflow-hidden border border-gray-100">
+                <div 
+                  key={request.id} 
+                  className="bg-white rounded-xl shadow-md overflow-hidden border border-gray-100 cursor-pointer hover:shadow-lg transition-shadow"
+                  onClick={(e) => {
+                    // Evitar que el evento se propague si se hizo clic en un botón u otro control interactivo
+                    if (
+                      e.target instanceof HTMLButtonElement ||
+                      e.target instanceof HTMLInputElement ||
+                      e.target instanceof HTMLAnchorElement ||
+                      (e.target instanceof HTMLElement && e.target.closest('button, input, a'))
+                    ) {
+                      return;
+                    }
+                    handleViewDetails(request);
+                  }}
+                >
                   {/* Header con estado y fecha */}
-                  <div className="bg-gradient-to-r from-blue-50 to-blue-100 px-4 py-3 flex items-center justify-between">
+                  <div className="bg-gradient-to-r from-blue-50 to-blue-100 px-4 py-3 flex items-center justify-between relative">
                     <div className="flex items-center space-x-2">
                       <div className={`w-3 h-3 rounded-full ${
                         request.status === 'cotizando' ? 'bg-blue-500 animate-pulse' : 
                         request.status === 'confirmado' ? 'bg-orange-500' : 
-                        request.status === 'completado' ? 'bg-green-500' : 'bg-gray-400'
+                        request.status === 'completado' ? 'bg-green-500' :
+                        request.status === 'entregado' ? 'bg-purple-500' : 'bg-gray-400'
                       }`}></div>
                       <span className="text-xs font-medium text-gray-700 capitalize">
                         {request.status === 'cotizando' ? 'En cotización' : 
                          request.status === 'confirmado' ? 'Confirmada' :
-                         request.status === 'completado' ? 'Completada' : request.status}
+                         request.status === 'completado' ? 'Completada' :
+                         request.status === 'entregado' ? 'Entregada' : request.status}
                       </span>
                     </div>
                     <span className="text-xs text-gray-500">
@@ -854,10 +1048,106 @@ const Requests = () => {
                         month: 'short'
                       })}
                     </span>
+                    {/* Botón compacto para ver detalles (abre/cierra detalles en la tarjeta) */}
+                    <button
+                      className="absolute top-2 right-2 bg-primary hover:bg-primary-700 text-primary-foreground rounded px-3 py-1 text-xs font-semibold shadow transition-colors border border-primary/40 focus:outline-none focus:ring-2 focus:ring-primary-300"
+                      style={{ zIndex: 2 }}
+                      onClick={e => {
+                        e.stopPropagation();
+                        setExpandedDetails(prev => ({ ...prev, [request.id]: !prev[request.id] }));
+                      }}
+                    >
+                      Ver
+                    </button>
                   </div>
                   
                   {/* Contenido principal */}
                   <div className="p-4">
+                    {/* Detalles del pedido estilo Tracking, solo si está expandido */}
+                    {expandedDetails?.[request.id] && (
+                      <div className="mb-4 p-4 rounded-lg border border-blue-200 bg-blue-50/60 animate-fade-in">
+                        <div className="mb-2 flex items-center gap-2">
+                          <span className={`px-2 py-1 rounded text-xs font-bold ${
+                            request.status === 'cotizando' ? 'bg-blue-100 text-blue-700' :
+                            request.status === 'confirmado' ? 'bg-orange-100 text-orange-700' :
+                            request.status === 'completado' ? 'bg-green-100 text-green-700' :
+                            request.status === 'entregado' ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-700'
+                          }`}>
+                            {request.status === 'cotizando' ? 'En cotización' :
+                              request.status === 'confirmado' ? 'Confirmada' :
+                              request.status === 'completado' ? 'Completada' :
+                              request.status === 'entregado' ? 'Entregada' : request.status}
+                          </span>
+                          <span className="text-xs text-gray-500">
+                            {new Date(request.createdAt).toLocaleString('es-ES', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                        <div className="mb-2">
+                          <span className="font-semibold text-gray-800">Título:</span> {request.title}
+                        </div>
+                        <div className="mb-2">
+                          <span className="font-semibold text-gray-800">Ubicación:</span> {request.location}
+                        </div>
+                        <div className="mb-2">
+                          <span className="font-semibold text-gray-800">Profesión:</span> {request.profession}
+                        </div>
+                        <div className="mb-2">
+                          <span className="font-semibold text-gray-800">Urgencia:</span> {request.urgency}
+                        </div>
+                        <div className="mb-2">
+                          <span className="font-semibold text-gray-800">Total productos:</span> {request.items?.length || 0}
+                        </div>
+                        <div className="mb-2">
+                          <span className="font-semibold text-gray-800">Cotizaciones:</span> {request.quotesCount}
+                        </div>
+                        {request.savings > 0 && (
+                          <div className="mb-2">
+                            <span className="font-semibold text-gray-800">Ahorro:</span> ${request.savings.toLocaleString()}
+                          </div>
+                        )}
+                        <div className="mb-2">
+                          <span className="font-semibold text-gray-800">Estado actual:</span> {request.status}
+                        </div>
+                        {/* Lista de productos */}
+                        {request.items && request.items.length > 0 && (
+                          <div className="mb-2">
+                            <span className="font-semibold text-gray-800">Productos:</span>
+                            <ul className="list-disc pl-5 text-xs mt-1">
+                              {request.items.map((item, idx) => (
+                                <li key={idx}>{item.name} x{item.quantity}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {/* Botón para reportar pedido - solo para pedidos entregados */}
+                        <div className="mt-4">
+                          {request.status === 'entregado' ? (
+                            reportedRequests.includes(request.id) ? (
+                              <div className="flex items-center gap-2 bg-gray-200 text-gray-600 px-4 py-2 rounded-lg text-sm font-medium">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                  <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clipRule="evenodd" />
+                                </svg>
+                                Pedido reportado
+                              </div>
+                            ) : (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setReportingRequest(request);
+                                  setShowReportModal(true);
+                                }}
+                                className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                              >
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                  <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                                </svg>
+                                Reportar pedido
+                              </button>
+                            )
+                          ) : null}
+                        </div>
+                      </div>
+                    )}
                     {/* Mostrar el total de la solicitud si hay productos con precio */}
                     <div className="flex flex-wrap gap-2 mb-3">
                       {totalSolicitud > 0 && (
@@ -967,35 +1257,15 @@ const Requests = () => {
                       )}
                     </div>
                     
-                    {/* Botón de acción principal solo si hay cotizaciones, completado o confirmado */}
-                    {(request.status === 'completado' || request.status === 'confirmado' || request.quotesCount > 0) && (
-                      <button 
-                        className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2.5 px-4 rounded-lg text-sm font-medium transition flex items-center justify-center gap-2"
-                        onClick={() => handleViewDetails(request)}
-                      >
-                        {request.status === 'completado' ? (
-                          <>
-                            <CheckCircle size={16} />
-                            <span>Ver detalles de entrega</span>
-                          </>
-                        ) : request.status === 'confirmado' ? (
-                          <>
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-                              <path fillRule="evenodd" d="M10 1a.75.75 0 01.55.24l3.25 3.5a.75.75 0 11-1.1 1.02L10 2.94 7.3 5.76a.75.75 0 01-1.1-1.02l3.25-3.5A.75.75 0 0110 1zm-2 6a2 2 0 114 0 2 2 0 01-4 0zm2 3a3 3 0 100-6 3 3 0 000 6zm-8 3a.75.75 0 01.75-.75h15.5a.75.75 0 010 1.5H2.75A.75.75 0 012 13zm1.75 1.5a.75.75 0 000 1.5h12.5a.75.75 0 000-1.5H3.75z" clipRule="evenodd" />
-                            </svg>
-                            <span>Seguir pedido</span>
-                          </>
-                        ) : request.quotesCount > 0 ? (
-                          <>
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-                              <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
-                              <path fillRule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd" />
-                            </svg>
-                            <span>Ver cotizaciones ({request.quotesCount})</span>
-                          </>
-                        ) : null}
-                      </button>
-                    )}
+                    {/* Nota para indicar que toda la tarjeta es clicable */}
+                    <div className="mt-4 text-center">
+                      <span className="text-xs text-gray-500 italic flex items-center justify-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 mr-1 text-blue-500">
+                          <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a.75.75 0 000 1.5h.253a.25.25 0 01.244.304l-.459 2.066A1.75 1.75 0 0010.747 15H11a.75.75 0 000-1.5h-.253a.25.25 0 01-.244-.304l.459-2.066A1.75 1.75 0 009.253 9H9z" clipRule="evenodd" />
+                        </svg>
+                        Toca para ver el seguimiento completo
+                      </span>
+                    </div>
                   </div>
                   
                   {/* Sección de Empresa Responsable - por producto si hay varias empresas */}
@@ -1050,7 +1320,7 @@ const Requests = () => {
                                   </div>
                                 </div>
                                 <button 
-                                  className="bg-blue-100 hover:bg-blue-200 text-blue-800 px-3 py-1.5 rounded-lg flex items-center text-xs font-medium transition"
+                                  className="bg-primary/10 hover:bg-primary/20 text-primary px-3 py-1.5 rounded-lg flex items-center text-xs font-medium transition-colors border border-primary/30 focus:outline-none focus:ring-2 focus:ring-primary-300"
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     navigate(`/messages?companyId=${ec.id || ec.companyId}`);
@@ -1155,7 +1425,7 @@ const Requests = () => {
                                         
                                         {/* Botón contactar */}
                                         <button 
-                                          className="bg-blue-100 text-blue-800 p-1 rounded-full"
+                                          className="bg-primary/10 text-primary p-1 rounded-full border border-primary/30 hover:bg-primary/20 focus:outline-none focus:ring-2 focus:ring-primary-300"
                                           onClick={(e) => {
                                             e.stopPropagation();
                                             navigate(`/messages?companyId=${ec.id || ec.companyId}`);
@@ -1200,44 +1470,56 @@ const Requests = () => {
                   </div>
 
                   {/* Sección de comentarios mejorada */}
-                  {/* Sección de comentarios mejorada */}
-                  {request.status === "confirmado" && (
+                  {(request.status === "confirmado" || request.status === "entregado") && (
                     <div className="border-t border-gray-100 mt-2 pt-4 px-4 pb-4">
                       <h3 className="text-sm font-medium text-gray-800 mb-3 flex items-center gap-1.5">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-blue-600">
                           <path d="M3.505 2.365A41.369 41.369 0 019 2c1.863 0 3.697.124 5.495.365 1.247.167 2.18 1.108 2.435 2.268a4.45 4.45 0 00-.577-.069 43.141 43.141 0 00-4.706 0C9.229 4.696 7.5 6.727 7.5 9.1a2.25 2.25 0 002.25 2.25h2.5a2.25 2.25 0 001.75-.84 2.25 2.25 0 00.859-1.754 2.25 2.25 0 00-1.25-1.985 41.4 41.4 0 014.779-1.573 41.41 41.41 0 013.712-.814c.19 1.174.29 2.359.29 3.546 0 2.8-.266 5.31-.78 7.305C20.266 16.564 19.089 17 17.5 17h-3.49c-.77 0-1.485-.22-2.01-.583-.527.363-1.242.583-2.01.583h-3.49c-1.589 0-2.766-.436-3.33-1.825A41.423 41.423 0 012 9.745a41.278 41.278 0 01.785-7.38C3.025 1.166 4.056.376 5.25.187c.03-.01.061-.016.093-.023z" />
                         </svg>
                         Comentarios
+                        {request.status === "entregado" && (
+                          <span className="text-xs text-gray-500 ml-2">(Un solo comentario permitido)</span>
+                        )}
                       </h3>
                       
                       <div className="space-y-3">
                         {/* Mostrar comentarios existentes */}
                         {comments[request.id]?.length > 0 ? (
                           <div className="space-y-2 mb-3">
-                            {comments[request.id].map((comment, index) => (
-                              <div
-                                key={index}
-                                className="bg-gray-50 rounded-lg p-3 text-sm text-gray-800 border border-gray-100"
-                              >
-                                <div className="flex items-center gap-2 mb-1">
-                                  <div className="w-5 h-5 rounded-full bg-blue-100 flex items-center justify-center">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3 text-blue-700">
-                                      <path d="M10 8a3 3 0 100-6 3 3 0 000 6zM3.465 14.493a1.23 1.23 0 00.41 1.412A9.957 9.957 0 0010 18c2.31 0 4.438-.784 6.131-2.1.43-.333.604-.903.408-1.41a7.002 7.002 0 00-13.074.003z" />
-                                    </svg>
+                            {comments[request.id].map((commentData, index) => {
+                              // Split the comment data to get the comment text and username
+                              const [comment, userName] = commentData.split(":::");
+                              
+                              return (
+                                <div
+                                  key={index}
+                                  className="bg-gray-50 rounded-lg p-3 text-sm text-gray-800 border border-gray-100"
+                                >
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <div className="w-5 h-5 rounded-full bg-blue-100 flex items-center justify-center">
+                                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3 text-blue-700">
+                                        <path d="M10 8a3 3 0 100-6 3 3 0 000 6zM3.465 14.493a1.23 1.23 0 00.41 1.412A9.957 9.957 0 0010 18c2.31 0 4.438-.784 6.131-2.1.43-.333.604-.903.408-1.41a7.002 7.002 0 00-13.074.003z" />
+                                      </svg>
+                                    </div>
+                                    <span className="text-sm font-bold text-blue-700 flex items-center gap-1">
+                                      {userName || "Usuario"}
+                                      {userName && userName !== "Usuario" && (
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 text-green-600">
+                                          <path fillRule="evenodd" d="M16.403 12.652a3 3 0 000-5.304 3 3 0 00-3.75-3.751 3 3 0 00-5.305 0 3 3 0 00-3.751 3.75 3 3 0 000 5.305 3 3 0 003.75 3.751 3 3 0 005.305 0 3 3 0 003.751-3.75zm-2.546-4.46a.75.75 0 00-1.214-.883l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clipRule="evenodd" />
+                                        </svg>
+                                      )}
+                                    </span>
+                                    <span className="text-xs text-gray-500 ml-auto">
+                                      {new Date().toLocaleDateString('es-ES', {
+                                        hour: '2-digit',
+                                        minute: '2-digit'
+                                      })}
+                                    </span>
                                   </div>
-                                  <span className="text-xs font-medium text-gray-700">
-                                    Comentario #{index + 1}
-                                  </span>
-                                  <span className="text-xs text-gray-500 ml-auto">
-                                    {new Date().toLocaleDateString('es-ES', {
-                                      hour: '2-digit',
-                                      minute: '2-digit'
-                                    })}
-                                  </span>
+                                  <p className="text-sm mt-1">{comment}</p>
                                 </div>
-                                <p>{comment}</p>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         ) : (
                           <div className="text-center py-3 bg-gray-50 rounded-lg text-sm text-gray-500 mb-3">
@@ -1245,31 +1527,37 @@ const Requests = () => {
                           </div>
                         )}
 
-                        {/* Agregar nuevo comentario */}
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="text"
-                            placeholder="Escribe un comentario..."
-                            value={newComment[request.id] || ""}
-                            onChange={(e) =>
-                              setNewComment((prev) => ({
-                                ...prev,
-                                [request.id]: e.target.value,
-                              }))
-                            }
-                            className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-300 focus:border-blue-300"
-                          />
-                          <button
-                            onClick={() => handleAddComment(request.id)}
-                            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center min-w-[80px]"
-                            disabled={!newComment[request.id]?.trim()}
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 mr-1">
-                              <path d="M3.105 2.289a.75.75 0 00-.826.95l1.414 4.925A1.5 1.5 0 005.135 9.25h6.115a.75.75 0 010 1.5H5.135a1.5 1.5 0 00-1.442 1.086l-1.414 4.926a.75.75 0 00.826.95 28.896 28.896 0 0015.293-7.154.75.75 0 000-1.115A28.897 28.897 0 003.105 2.289z" />
+                        {/* Agregar nuevo comentario - Solo permitir un comentario para pedidos entregados */}
+                        {!(request.status === "entregado" && comments[request.id]?.length > 0) ? (
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              placeholder="Escribe un comentario..."
+                              value={newComment[request.id] || ""}
+                              onChange={(e) =>
+                                setNewComment((prev) => ({
+                                  ...prev,
+                                  [request.id]: e.target.value,
+                                }))
+                              }
+                              className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-300 focus:border-blue-300"
+                            />
+                            <button
+                              onClick={() => handleAddComment(request.id)}
+                              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center min-w-[80px]"
+                              disabled={!newComment[request.id]?.trim()}
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 mr-1">
+                                <path d="M3.105 2.289a.75.75 0 00-.826.95l1.414 4.925A1.5 1.5 0 005.135 9.25h6.115a.75.75 0 010 1.5H5.135a1.5 1.5 0 00-1.442 1.086l-1.414 4.926a.75.75 0 00.826.95 28.896 28.896 0 0015.293-7.154.75.75 0 000-1.115A28.897 28.897 0 003.105 2.289z" />
                             </svg>
                             Enviar
                           </button>
                         </div>
+                        ) : (
+                          <div className="bg-gray-100 rounded-lg p-3 text-center">
+                            <p className="text-sm text-gray-600">Ya has enviado un comentario para este pedido.</p>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1329,6 +1617,113 @@ const Requests = () => {
             )}
           </div>
         </div>
+
+        {/* Modal para reportar pedido */}
+        {showReportModal && reportingRequest && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+            <div className="bg-white rounded-xl shadow-lg p-6 max-w-lg w-full">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-bold text-gray-900">Reportar pedido</h2>
+                <button 
+                  onClick={() => setShowReportModal(false)}
+                  className="text-gray-500 hover:text-gray-700"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
+                    <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+                  </svg>
+                </button>
+              </div>
+              
+              <div className="mb-4">
+                <p className="text-sm text-gray-600 mb-2">
+                  Pedido: <span className="font-medium text-gray-800">{reportingRequest.title}</span>
+                </p>
+                {reportingRequest.selectedCompanies && reportingRequest.selectedCompanies.length > 0 && (
+                  <p className="text-sm text-gray-600">
+                    Empresa: <span className="font-medium text-gray-800">
+                      {reportingRequest.selectedCompanies[0].companyName || reportingRequest.selectedCompanies[0].name || 'No especificada'}
+                    </span>
+                  </p>
+                )}
+              </div>
+              
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Motivo del reporte:
+                </label>
+                <select 
+                  value={reportReason} 
+                  onChange={(e) => setReportReason(e.target.value)}
+                  className="w-full p-2.5 text-gray-700 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="">Selecciona un motivo</option>
+                  <option value="no_llego">El pedido no llegó</option>
+                  <option value="incompleto">Pedido incompleto</option>
+                  <option value="mal_estado">Producto en mal estado</option>
+                  <option value="no_corresponde">No corresponde a lo solicitado</option>
+                  <option value="retraso">Retraso significativo</option>
+                  <option value="otro">Otro problema</option>
+                </select>
+              </div>
+              
+              <div className="mb-5">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Detalles adicionales:
+                </label>
+                <textarea 
+                  value={reportDetails}
+                  onChange={(e) => setReportDetails(e.target.value)}
+                  placeholder="Describe el problema con más detalle..."
+                  className="w-full p-2.5 text-gray-700 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  rows={4}
+                ></textarea>
+              </div>
+              
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => setShowReportModal(false)}
+                  className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-100 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleReportRequest}
+                  disabled={!reportReason}
+                  className={`px-4 py-2 rounded-md text-white font-medium ${
+                    reportReason ? 'bg-red-600 hover:bg-red-700' : 'bg-red-300 cursor-not-allowed'
+                  } transition-colors`}
+                >
+                  Enviar reporte
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Mensaje de éxito después de reportar un pedido */}
+        {showSuccessMessage && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 animate-fade-in">
+            <div className="bg-white rounded-xl shadow-lg p-8 max-w-md w-full text-center">
+              <div className="flex justify-center mb-4">
+                <div className="rounded-full bg-green-100 p-3 animate-bounce">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-8 h-8 text-green-600">
+                    <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clipRule="evenodd" />
+                  </svg>
+                </div>
+              </div>
+              <h2 className="text-xl font-bold text-gray-900 mb-3">¡Reporte Exitoso!</h2>
+              <p className="text-gray-700 mb-6">
+                Pronto uno de nuestros asesores se comunicará contigo. Mantente atento a tus medios de comunicación vinculados a este perfil.
+              </p>
+              <button
+                onClick={() => setShowSuccessMessage(false)}
+                className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
+              >
+                Entendido
+              </button>
+            </div>
+          </div>
+        )}
       </main>
 
       <BottomNavigation />

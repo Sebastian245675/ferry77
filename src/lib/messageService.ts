@@ -192,6 +192,12 @@ export class MessageService {
   // Enviar un nuevo mensaje
   async sendMessage(conversationId: string, content: string, attachments?: any[]): Promise<Message | null> {
     try {
+      // Validar parámetros
+      if (!conversationId) {
+        console.error("Error: ID de conversación no válido");
+        return null;
+      }
+      
       const user = this.auth.currentUser;
       if (!user) throw new Error("Usuario no autenticado");
       
@@ -219,17 +225,31 @@ export class MessageService {
       // Obtener datos del usuario para adjuntar al mensaje
       const userName = user.displayName || 'Usuario';
       
+      // Construir mensaje sin propiedades undefined
       const newMessage: Omit<Message, 'id'> = {
         senderId: user.uid,
         senderName: userName,
-        senderAvatar: user.photoURL || undefined,
         recipientId: '', // Se llenará abajo
         content,
         timestamp: Date.now(),
         read: false,
-        status: 'sent',
-        attachments: attachments?.map(a => ({ ...a, id: `attachment_${Date.now()}_${Math.random().toString(36).substr(2, 9)}` }))
+        status: 'sent'
       };
+      
+      // Añadir avatar solo si existe
+      if (user.photoURL) {
+        // @ts-ignore - Añadimos la propiedad senderAvatar condicionalmente
+        newMessage.senderAvatar = user.photoURL;
+      }
+      
+      // Añadir adjuntos solo si existen
+      if (attachments && attachments.length > 0) {
+        // @ts-ignore - Añadimos la propiedad attachments condicionalmente
+        newMessage.attachments = attachments.map(a => ({ 
+          ...a, 
+          id: `attachment_${Date.now()}_${Math.random().toString(36).substr(2, 9)}` 
+        }));
+      }
       
       // Obtener la conversación para determinar el destinatario
       const convRef = ref(this.db, `conversations/${conversationId}`);
@@ -350,26 +370,32 @@ export class MessageService {
       
       const userName = user.displayName || 'Usuario';
       
+      // Garantizar que no haya valores undefined que puedan causar problemas
+      // Firebase Realtime Database no acepta valores undefined
       const newConversation: Omit<Conversation, 'id'> = {
         participants: [
           {
             userId: user.uid,
             name: userName,
-            avatar: user.photoURL || undefined,
+            // Si photoURL es undefined o null, no incluir la propiedad avatar
+            ...(user.photoURL ? { avatar: user.photoURL } : {}),
             role: metadata?.companyId ? 'buyer' : 'seller'
           },
           {
             userId: recipientId,
             name: recipientName,
-            avatar: recipientAvatar,
+            // Si recipientAvatar es undefined o null, no incluir la propiedad avatar
+            ...(recipientAvatar ? { avatar: recipientAvatar } : {}),
             role: metadata?.companyId ? 'seller' : 'buyer'
           }
         ],
         lastActivity: Date.now(),
         unreadCount: { [recipientId]: 0, [user.uid]: 0 },
         type: 'direct',
-        ...metadata
+        ...(metadata || {}) // Asegurarse que metadata no sea undefined
       };
+      
+      console.log("Creando nueva conversación con datos:", JSON.stringify(newConversation));
       
       // Crear la conversación en la base de datos
       const conversationsRef = ref(this.db, 'conversations');

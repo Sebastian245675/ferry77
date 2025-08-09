@@ -1,0 +1,75 @@
+// This is the part we need to add to the Profile component
+// We'll copy and paste this manually to fix the syntax issues
+
+// Add this dialog at the end of the return statement, right before the last closing div
+<Dialog open={Boolean(inventoryLink)} onOpenChange={(open) => !open && setInventoryLink(null)}>
+  <DialogContent className="sm:max-w-md">
+    <DialogHeader>
+      <DialogTitle className="flex items-center gap-2 text-blue-700">
+        <Link className="h-5 w-5" />
+        Enlace para gestión de inventario
+      </DialogTitle>
+      <DialogDescription>
+        Comparte este enlace con quien necesite administrar tu inventario. Válido por 48 horas.
+      </DialogDescription>
+    </DialogHeader>
+    <div className="flex flex-col space-y-4 py-4">
+      <div className="flex items-center gap-2 bg-blue-50 p-3 rounded-lg border border-blue-100">
+        <ShieldCheck className="h-5 w-5 text-green-600 flex-shrink-0" />
+        <p className="text-sm text-gray-700">
+          Este enlace permite actualizar precios y stock <strong>sin necesidad de iniciar sesión</strong>.
+          Compártelo solo con personas de confianza.
+        </p>
+      </div>
+      
+      <div className="flex items-center space-x-2">
+        <div className="grid flex-1 gap-2">
+          <Label htmlFor="link" className="sr-only">Enlace</Label>
+          <div className="flex items-center border rounded-md pl-3 pr-1 py-1 bg-gray-50">
+            <input
+              id="link"
+              readOnly
+              value={inventoryLink || ""}
+              className="flex-1 border-0 bg-transparent py-1 text-sm outline-none placeholder:text-gray-500 focus:ring-0"
+            />
+            <Button 
+              type="button" 
+              size="sm" 
+              className="h-8 px-2 bg-blue-600 hover:bg-blue-700 text-white"
+              onClick={handleCopyLink}
+            >
+              <Copy className="h-4 w-4" />
+              <span className="sr-only">Copiar</span>
+            </Button>
+          </div>
+        </div>
+      </div>
+      
+      <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-center mt-4">
+        <Button 
+          type="button"
+          variant="outline" 
+          className="gap-2 border-green-200 text-green-700 hover:bg-green-50"
+          onClick={() => {
+            if (inventoryLink) {
+              window.open(inventoryLink, '_blank');
+            }
+          }}
+        >
+          <ExternalLink className="h-4 w-4" />
+          Abrir en nueva ventana
+        </Button>
+        
+        <Button 
+          type="button"
+          variant="default"
+          className="gap-2"
+          onClick={() => setInventoryLink(null)}
+        >
+          <CheckCircle className="h-4 w-4" />
+          Listo
+        </Button>
+      </div>
+    </div>
+  </DialogContent>
+</Dialog>

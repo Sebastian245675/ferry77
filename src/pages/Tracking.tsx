@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import MiniMap from '../components/MiniMap';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import BottomNavigation from '../components/BottomNavigation';
 import { 
@@ -13,13 +13,22 @@ import {
   Star, 
   Navigation, 
   DollarSign, 
-  Truck 
+  Truck,
+  Filter,
+  ArrowRight,
+  ExternalLink,
+  ChevronRight,
+  ChevronLeft,
+  User,
+  Calendar,
+  Tag
 } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardFooter, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { collection, query, where, getDocs, doc, getDoc, onSnapshot } from "firebase/firestore";
 import { db, rtdb } from "../lib/firebase";
 import { ref, push, onValue, off, serverTimestamp } from "firebase/database";
@@ -39,7 +48,8 @@ interface TrackingOrder {
   companyName?: string;
   deliveryPerson: string;
   phone: string;
-  status: 'preparando' | 'en_camino' | 'entregado';
+  status: 'en_espera' | 'preparando' | 'en_camino' | 'entregado';
+  createdAt?: string | Date;
   estimatedTime: string;
   currentLocation: string;
   items: any[];
@@ -58,9 +68,12 @@ const Tracking = () => {
   const [selectedOrder, setSelectedOrder] = useState<string | null>(null);
   const [messageText, setMessageText] = useState('');
   const [confirmedQuotes, setConfirmedQuotes] = useState<TrackingOrder[]>([]);
+  const [filteredQuotes, setFilteredQuotes] = useState<TrackingOrder[]>([]);
+  const [statusFilter, setStatusFilter] = useState<string>('all');
   const [messages, setMessages] = useState<DeliveryMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<any>(null);
+  const [showDetailView, setShowDetailView] = useState(false);
   // Estado para lat/lng de la empresa
   const [companyCoords, setCompanyCoords] = useState<{ lat: number; lng: number } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -95,6 +108,7 @@ const Tracking = () => {
   // Función para obtener el color del estado de entrega
   const getStatusColor = (status: string) => {
     switch (status) {
+      case 'en_espera': return 'bg-orange-100 text-orange-800';
       case 'preparando': return 'bg-yellow-100 text-yellow-800';
       case 'en_camino': return 'bg-blue-100 text-blue-800';
       case 'entregado': return 'bg-green-100 text-green-800';
@@ -105,11 +119,41 @@ const Tracking = () => {
   // Función para obtener el texto del estado de entrega
   const getStatusText = (status: string) => {
     switch (status) {
+      case 'en_espera': return 'En espera de aprobación';
       case 'preparando': return 'Preparando';
       case 'en_camino': return 'En camino';
       case 'entregado': return 'Entregado';
       default: return 'Desconocido';
     }
+  };
+  
+  // Función para determinar el estado de una orden basado en sus propiedades
+  const determineOrderStatus = (orderData: any): 'en_espera' | 'preparando' | 'en_camino' | 'entregado' => {
+    console.log("Determinando estado para:", orderData.id, "status:", orderData.status, "deliveryStatus:", orderData.deliveryStatus);
+    
+    // Verificar primero si está entregado (prioridad máxima)
+    if (orderData.status === "completado" || 
+        orderData.deliveryStatus === "entregado" || 
+        orderData.deliveryStatus === "completado") {
+      console.log("→ Orden ENTREGADA");
+      return "entregado";
+    }
+    // Si no está entregado, verificar si está en camino
+    else if (orderData.deliveryStatus === "enviado" || 
+             orderData.deliveryStatus === "en_camino") {
+      console.log("→ Orden EN CAMINO");
+      return "en_camino";
+    }
+    // Si no está en camino, verificar si está en preparación
+    else if (orderData.status === "confirmado" || 
+             orderData.deliveryStatus === "preparando") {
+      console.log("→ Orden PREPARANDO");
+      return "preparando";
+    }
+    
+    // Estado por defecto: en espera
+    console.log("→ Orden EN ESPERA");
+    return "en_espera";
   };
   
   useEffect(() => {
@@ -129,7 +173,7 @@ const Tracking = () => {
           const solicitudQuery = query(
             collection(db, "solicitud"),
             where("userId", "==", user.uid),
-            where("status", "in", ["confirmado", "completado", "cotizando", "pendiente"])
+            where("status", "in", ["confirmado", "completado", "cotizando", "pendiente", "entregado"])
           );
           const solicitudSnapshot = await getDocs(solicitudQuery);
           console.log(`Solicitudes encontradas: ${solicitudSnapshot.size}`);
@@ -137,12 +181,8 @@ const Tracking = () => {
             const solicitudData = docSnap.data();
             console.log(`Datos de solicitud ${docSnap.id}:`, solicitudData);
             if (solicitudData) {
-              let orderStatus: 'preparando' | 'en_camino' | 'entregado' = 'preparando';
-              if (solicitudData.deliveryStatus === "enviado" || solicitudData.deliveryStatus === "en_camino") {
-                orderStatus = "en_camino";
-              } else if (solicitudData.deliveryStatus === "entregado") {
-                orderStatus = "entregado";
-              }
+              // Determinar el estado de la orden utilizando la función auxiliar
+              const orderStatus = determineOrderStatus(solicitudData);
               let companyInfo = {
                 name: "Empresa",
                 phone: "No disponible"
@@ -193,7 +233,8 @@ const Tracking = () => {
                 requestTitle: solicitudData.title || "Solicitud",
                 description: solicitudData.description,
                 statusNote: solicitudData.statusNote,
-                statusUpdatedAt: solicitudData.statusUpdatedAt
+                statusUpdatedAt: solicitudData.statusUpdatedAt,
+                createdAt: solicitudData.createdAt || new Date()
               });
             }
           }
@@ -214,12 +255,8 @@ const Tracking = () => {
             const quoteData = docSnap.data();
             console.log(`Datos de cotización ${docSnap.id}:`, quoteData);
             if (quoteData) {
-              let orderStatus: 'preparando' | 'en_camino' | 'entregado' = 'preparando';
-              if (quoteData.deliveryStatus === "enviado" || quoteData.deliveryStatus === "en_camino") {
-                orderStatus = "en_camino";
-              } else if (quoteData.deliveryStatus === "entregado") {
-                orderStatus = "entregado";
-              }
+              // Determinar el estado de la orden utilizando la función auxiliar
+              const orderStatus = determineOrderStatus(quoteData);
               let companyId = quoteData.companyId || (quoteData.company && (quoteData.company.id || quoteData.company.companyId)) || null;
               let companyName = quoteData.companyName || (quoteData.company && quoteData.company.name) || "Empresa";
               let companyPhone = "No disponible";
@@ -254,7 +291,8 @@ const Tracking = () => {
                 requestTitle: quoteData.requestTitle,
                 description: quoteData.description,
                 statusNote: quoteData.statusNote,
-                statusUpdatedAt: quoteData.statusUpdatedAt
+                statusUpdatedAt: quoteData.statusUpdatedAt,
+                createdAt: quoteData.createdAt || new Date()
               });
             }
           }
@@ -290,6 +328,16 @@ const Tracking = () => {
 
   const sendMessage = async () => {
     if (!messageText.trim() || !selectedOrder) return;
+    // Contar mensajes enviados por el usuario en este pedido
+    const userMessages = messages.filter(m => m.sender === 'user').length;
+    if (userMessages >= 2) {
+      toast({
+        title: 'Límite alcanzado',
+        description: 'Solo puedes enviar 2 mensajes por pedido.',
+        variant: 'destructive'
+      });
+      return;
+    }
     const chatRef = ref(rtdb, `deliveryChats/${selectedOrder}`);
     await push(chatRef, {
       message: messageText,
@@ -331,6 +379,25 @@ const Tracking = () => {
     
     return () => unsubscribe();
   }, [navigate, toast]);
+
+  // Filtrar por estado
+  useEffect(() => {
+    console.log("Estado actual:", statusFilter);
+    console.log("Pedidos disponibles:", confirmedQuotes);
+    
+    // Revisar estados de todos los pedidos para depuración
+    confirmedQuotes.forEach(order => {
+      console.log(`Pedido ${order.orderNumber} - status: ${order.status}, deliveryStatus: ${order.deliveryStatus}`);
+    });
+    
+    if (statusFilter === 'all') {
+      setFilteredQuotes(confirmedQuotes);
+    } else {
+      const filtered = confirmedQuotes.filter(order => order.status === statusFilter);
+      console.log("Pedidos filtrados:", filtered);
+      setFilteredQuotes(filtered);
+    }
+  }, [statusFilter, confirmedQuotes]);
 
   // Obtener el pedido seleccionado con lógica de fallback
   const currentOrder = confirmedQuotes.find(order => order.id === selectedOrder) || 
@@ -427,6 +494,24 @@ const Tracking = () => {
               <Card>
                 <CardHeader>
                   <CardTitle>Mis Pedidos</CardTitle>
+                  <div className="flex items-center gap-2 mt-2">
+                    <Filter className="h-4 w-4 text-gray-500" />
+                    <Select
+                      value={statusFilter}
+                      onValueChange={(value) => setStatusFilter(value)}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Filtrar por estado" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Todos los pedidos</SelectItem>
+                        <SelectItem value="en_espera">En espera</SelectItem>
+                        <SelectItem value="preparando">Preparando</SelectItem>
+                        <SelectItem value="en_camino">En camino</SelectItem>
+                        <SelectItem value="entregado">Entregado</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {loading ? (
@@ -436,10 +521,13 @@ const Tracking = () => {
                       <div className="h-16 bg-gray-200 rounded"></div>
                     </div>
                   ) : confirmedQuotes.length > 0 ? (
-                    confirmedQuotes.map((order) => (
+                    filteredQuotes.map((order) => (
                       <div
                         key={order.id}
-                        onClick={() => setSelectedOrder(order.id)}
+                        onClick={() => {
+                          setSelectedOrder(order.id);
+                          setShowDetailView(false); // Resetear la vista detallada al cambiar de pedido
+                        }}
                         className={`p-3 rounded-lg border cursor-pointer transition-colors ${
                           selectedOrder === order.id 
                             ? 'border-blue-500 bg-blue-50' 
@@ -454,6 +542,21 @@ const Tracking = () => {
                         </div>
                         <p className="text-sm text-gray-600">{order.company}</p>
                         <p className="text-sm text-gray-500">${order.total.toLocaleString()}</p>
+                        <p className="text-xs text-gray-400 mt-1">{order.createdAt ? (typeof order.createdAt === 'string' ? order.createdAt : new Date(order.createdAt).toLocaleString('es-AR')) : ''}</p>
+                        <div className="flex justify-end mt-2">
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            className="text-blue-600 hover:text-blue-700"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedOrder(order.id);
+                              setShowDetailView(true);
+                            }}
+                          >
+                            Ver <ChevronRight className="h-3 w-3 ml-1" />
+                          </Button>
+                        </div>
                       </div>
                     ))
                   ) : (
@@ -621,97 +724,239 @@ const Tracking = () => {
                   </Card>
 
                   {/* Chat con delivery */}
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="flex items-center space-x-2">
-                        <MessageCircle className="w-5 h-5" />
-                        <span>Chat con Delivery</span>
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-4">
-                        <div className="h-60 overflow-y-auto border rounded-lg p-4 space-y-3 bg-gray-50">
-                          {messages.length === 0 ? (
-                            <p className="text-center text-gray-500 py-8">
-                              No hay mensajes aún. Envía el primer mensaje al repartidor.
-                            </p>
-                          ) : (
-                            messages.map((msg) => (
-                            <div
-                              key={msg.id}
-                              className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
-                            >
+                  {!showDetailView && (
+                    <Card>
+                      <CardHeader className="pb-3">
+                        <CardTitle className="flex items-center space-x-2">
+                          <MessageCircle className="w-4 h-4" />
+                          <span>Chat con Delivery</span>
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-4">
+                          <div className="h-60 overflow-y-auto border rounded-lg p-4 space-y-3 bg-gray-50">
+                            {messages.length === 0 ? (
+                              <p className="text-center text-gray-500 py-8">
+                                No hay mensajes aún. Envía el primer mensaje al repartidor.
+                              </p>
+                            ) : (
+                              messages.map((msg) => (
                               <div
-                                className={`max-w-xs p-3 rounded-lg ${
-                                  msg.sender === 'user'
-                                    ? 'bg-blue-600 text-white'
-                                    : 'bg-white border text-gray-900'
-                                }`}
+                                key={msg.id}
+                                className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
                               >
-                                <p className="text-sm">{msg.message}</p>
-                                <span className={`text-xs mt-1 block ${
-                                  msg.sender === 'user' ? 'text-blue-100' : 'text-gray-500'
-                                }`}>
-                                  {msg.timestamp}
-                                </span>
+                                <div
+                                  className={`max-w-xs p-3 rounded-lg ${
+                                    msg.sender === 'user'
+                                      ? 'bg-blue-600 text-white'
+                                      : 'bg-white border text-gray-900'
+                                  }`}
+                                >
+                                  <p className="text-sm">{msg.message}</p>
+                                  <span className={`text-xs mt-1 block ${
+                                    msg.sender === 'user' ? 'text-blue-100' : 'text-gray-500'
+                                  }`}>
+                                    {msg.timestamp}
+                                  </span>
+                                </div>
+                              </div>
+                            ))
+                            )}
+                            <div ref={messagesEndRef} />
+                            <div ref={messagesEndRef} />
+                          </div>
+                          
+                          <div className="flex space-x-2">
+                            <Input
+                              placeholder="Escribe un mensaje..."
+                              value={messageText}
+                              onChange={(e) => setMessageText(e.target.value)}
+                              onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+                              className="flex-1"
+                            />
+                            <Button onClick={sendMessage}>
+                              Enviar
+                            </Button>
+                          </div>
+                          
+                          <div className="text-xs text-gray-500">
+                            Solo puedes enviar 2 mensajes por pedido
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+                  
+                  {/* Vista detallada del pedido */}
+                  {showDetailView && (
+                    <Card>
+                      <CardHeader className="border-b">
+                        <div className="flex items-center justify-between">
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            onClick={() => setShowDetailView(false)}
+                            className="flex items-center text-blue-600"
+                          >
+                            <ChevronLeft className="h-4 w-4 mr-1" /> Volver
+                          </Button>
+                          <CardTitle className="text-base">Detalles del pedido {currentOrder.orderNumber}</CardTitle>
+                        </div>
+                      </CardHeader>
+                      <CardContent className="pt-4">
+                        <div className="space-y-4">
+                          {/* Información general */}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div className="space-y-2">
+                              <h3 className="font-semibold flex items-center text-gray-700">
+                                <Calendar className="w-4 h-4 mr-1" /> Información general
+                              </h3>
+                              <div className="bg-gray-50 p-3 rounded-lg space-y-1">
+                                <div className="flex justify-between items-center">
+                                  <span className="text-sm text-gray-600">Estado:</span>
+                                  <Badge className={getStatusColor(currentOrder.status)}>
+                                    {getStatusText(currentOrder.status)}
+                                  </Badge>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-sm text-gray-600">Fecha:</span>
+                                  <span className="text-sm font-medium">
+                                    {currentOrder.createdAt ? (typeof currentOrder.createdAt === 'string' 
+                                      ? currentOrder.createdAt 
+                                      : new Date(currentOrder.createdAt).toLocaleString('es-AR')) 
+                                      : 'N/A'}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-sm text-gray-600">Tiempo estimado:</span>
+                                  <span className="text-sm font-medium">{currentOrder.estimatedTime || 'Pendiente'}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-sm text-gray-600">Ubicación actual:</span>
+                                  <span className="text-sm font-medium">{currentOrder.currentLocation || 'En preparación'}</span>
+                                </div>
                               </div>
                             </div>
-                          ))
-                          )}
-                          <div ref={messagesEndRef} />
-                          <div ref={messagesEndRef} />
+                            
+                            <div className="space-y-2">
+                              <h3 className="font-semibold flex items-center text-gray-700">
+                                <User className="w-4 h-4 mr-1" /> Información de la empresa
+                              </h3>
+                              <div className="bg-gray-50 p-3 rounded-lg space-y-1">
+                                <div className="flex justify-between">
+                                  <span className="text-sm text-gray-600">Empresa:</span>
+                                  <span className="text-sm font-medium">{currentOrder.company}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-sm text-gray-600">Persona de entrega:</span>
+                                  <span className="text-sm font-medium">{currentOrder.deliveryPerson || 'Pendiente'}</span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                  <span className="text-sm text-gray-600">Contacto:</span>
+                                  <a 
+                                    href={`tel:${currentOrder.phone}`}
+                                    className="text-sm font-medium text-blue-600 hover:underline"
+                                  >
+                                    {currentOrder.phone}
+                                  </a>
+                                </div>
+                                {currentOrder.rating && (
+                                  <div className="flex justify-between items-center">
+                                    <span className="text-sm text-gray-600">Calificación:</span>
+                                    <div className="flex items-center">
+                                      <Star className="w-4 h-4 text-yellow-400 fill-current" />
+                                      <span className="text-sm font-medium ml-1">{currentOrder.rating}</span>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          
+                          {/* Detalles de los items */}
+                          <div className="space-y-3">
+                            <h3 className="font-semibold flex items-center text-gray-700">
+                              <Tag className="w-4 h-4 mr-1" /> Detalles de los productos
+                            </h3>
+                            <div className="bg-gray-50 rounded-lg overflow-hidden">
+                              <div className="overflow-x-auto">
+                                <table className="min-w-full divide-y divide-gray-200">
+                                  <thead className="bg-gray-100">
+                                    <tr>
+                                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Producto
+                                      </th>
+                                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Cantidad
+                                      </th>
+                                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Precio
+                                      </th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="bg-white divide-y divide-gray-200">
+                                    {currentOrder.items && currentOrder.items.map((item, index) => (
+                                      <tr key={index}>
+                                        <td className="px-4 py-2 whitespace-nowrap text-sm font-medium text-gray-900">
+                                          {item.name}
+                                        </td>
+                                        <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
+                                          {item.quantity}
+                                        </td>
+                                        <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900 text-right">
+                                          ${item.price ? (item.price * (item.quantity || 1)).toLocaleString() : 
+                                             item.unitPrice ? (item.unitPrice * (item.quantity || 1)).toLocaleString() : 'N/A'}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                  <tfoot className="bg-gray-50">
+                                    <tr>
+                                      <td colSpan={2} className="px-4 py-2 text-sm font-medium text-gray-900 text-right">
+                                        Total:
+                                      </td>
+                                      <td className="px-4 py-2 text-sm font-bold text-gray-900 text-right">
+                                        ${currentOrder.total.toLocaleString()}
+                                      </td>
+                                    </tr>
+                                  </tfoot>
+                                </table>
+                              </div>
+                            </div>
+                          </div>
+                          
+                          {/* Botones de acción */}
+                          <div className="flex flex-wrap gap-2 justify-end">
+                            <Button 
+                              variant="outline" 
+                              onClick={() => setShowDetailView(false)}
+                            >
+                              <MessageCircle className="w-4 h-4 mr-2" />
+                              Ir al chat
+                            </Button>
+                            {currentOrder.status === 'entregado' && (
+                              <Button 
+                                onClick={() => navigate('/reviews')}
+                                className="bg-green-600 hover:bg-green-700"
+                              >
+                                <Star className="w-4 h-4 mr-2" />
+                                Calificar pedido
+                              </Button>
+                            )}
+                            {currentOrder.status === 'en_camino' && (
+                              <Button 
+                                onClick={openMap}
+                                className="bg-blue-600 hover:bg-blue-700"
+                              >
+                                <Navigation className="w-4 h-4 mr-2" />
+                                Seguir en mapa
+                              </Button>
+                            )}
+                          </div>
                         </div>
-                        
-                        <div className="flex space-x-2">
-                          <Input
-                            placeholder="Escribe un mensaje..."
-                            value={messageText}
-                            onChange={(e) => setMessageText(e.target.value)}
-                            onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
-                            className="flex-1"
-                          />
-                          <Button onClick={sendMessage}>
-                            Enviar
-                          </Button>
-                        </div>
-                        
-                        <div className="text-xs text-gray-500">
-                          Solo puedes enviar 2 mensajes por pedido
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  {/* Detalles del pedido */}
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Detalles del Pedido</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-3">
-                        <div className="flex justify-between items-center">
-                          <span className="font-medium">Empresa:</span>
-                          <span>{currentOrder.company}</span>
-                        </div>
-                        <div className="flex justify-between items-center">
-                          <span className="font-medium">Tiempo estimado:</span>
-                          <span>{currentOrder.estimatedTime}</span>
-                        </div>
-                        <div className="border-t pt-3">
-                          <h4 className="font-medium mb-2">Productos:</h4>
-                          <ul className="space-y-1">
-                            {currentOrder.items.map((item, index) => (
-                              <li key={index} className="text-sm text-gray-600">• {item.name} (x{item.quantity})</li>
-                            ))}
-                          </ul>
-                        </div>
-                        <div className="border-t pt-3 flex justify-between items-center font-semibold">
-                          <span>Total:</span>
-                          <span>${currentOrder.total.toLocaleString()}</span>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
+                      </CardContent>
+                    </Card>
+                  )}
                 </>
               ) : (
                 <Card>

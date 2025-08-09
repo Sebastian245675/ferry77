@@ -1,5 +1,5 @@
 import React from 'react';
-import { Calendar, MapPin, Clock, DollarSign, CheckCircle, XCircle } from 'lucide-react';
+import { Calendar, MapPin, Clock, DollarSign, CheckCircle, XCircle, ChevronRight, Eye } from 'lucide-react';
 
 interface RequestItem {
   name: string;
@@ -97,12 +97,25 @@ const RequestCard: React.FC<RequestCardProps> = ({ request, onViewDetails }) => 
       </div>
 
       <div className="border-t pt-2 sm:pt-3 md:pt-4">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="text-xs sm:text-sm text-gray-600">
             {request.items && request.items.length ? `${request.items.length} ${request.items.length === 1 ? 'art.' : 'arts.'}` : 'Sin arts.'}
           </div>
-          <div className="text-xs sm:text-sm font-medium text-primary-600">
-            {request.quotesCount || 0} {(request.quotesCount || 0) === 1 ? 'cotiz.' : 'cotiz.'}
+          <div className="flex items-center gap-2">
+            <div className={`px-2 py-0.5 rounded-full text-xs font-medium ${getStatusColor(request.status || 'pendiente')}`}>
+              {request.status === 'confirmado' ? 'cotizando' : request.status}
+            </div>
+            <button 
+              onClick={(e) => {
+                e.stopPropagation(); // Prevent triggering the parent onClick
+                onViewDetails(request);
+              }}
+              className="px-2.5 py-1 bg-primary text-white text-xs rounded-full hover:bg-primary-dark transition-colors flex items-center shadow-sm"
+            >
+              <Eye className="h-3 w-3 mr-1" />
+              <span className="hidden sm:inline">Seguimiento</span>
+              <span className="sm:hidden">Ver</span>
+            </button>
           </div>
         </div>
         

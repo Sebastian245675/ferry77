@@ -9,67 +9,199 @@ import { getAuth, onAuthStateChanged } from "firebase/auth";
 
 const Home = () => {
   const [activeRequestsCount, setActiveRequestsCount] = useState(0);
+  const [checkingUser, setCheckingUser] = useState(true); // Nuevo estado para saber si está verificando tipo de usuario
+  const [slowConnection, setSlowConnection] = useState(false); // Estado para alerta de internet lento
+  const [userType, setUserType] = useState(''); // 'empresa' o 'usuario'
   const navigate = useNavigate();
   const auth = getAuth();
+  
+  // DEBUG FORCE - Eliminar en producción
+  useEffect(() => {
+    // Función para depurar problemas de redirección
+    const testLocalStorage = () => {
+      console.log("[DEBUG][FORCE] localStorage userType:", localStorage.getItem('userType'));
+      console.log("[DEBUG][FORCE] localStorage uid:", localStorage.getItem('uid'));
+    };
+    
+    testLocalStorage();
+    
+    // Este código es SOLO para forzar a que revise si es empresa en desarrollo
+    const forcedCheck = () => {
+      const path = window.location.pathname;
+      if (path === "/dashboard") {
+        // Si estamos en dashboard pero deberíamos estar en backoffice, corregir
+        if (localStorage.getItem('userType') === 'empresa') {
+          console.log("[DEBUG][FORCE] ⚠️ EN DASHBOARD PERO ES EMPRESA. Redirigiendo a backoffice...");
+          navigate("/backoffice", { replace: true });
+        }
+      }
+    };
+    
+    // Ejecutar 2 segundos después para dar tiempo a que cargue todo
+    const timer = setTimeout(forcedCheck, 2000);
+    return () => clearTimeout(timer);
+  }, [navigate]);
 
   // Verificar si el usuario está autenticado y redirigir automáticamente
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    // Intenta obtener el tipo de usuario del localStorage para acelerar la experiencia
+    const cachedUserType = localStorage.getItem('userType');
+    const cachedUid = localStorage.getItem('uid');
+    
+    let slowTimeout;
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
-        // Usuario autenticado, verificar si es empresa o usuario normal
         const uid = user.uid;
+        console.log("[AUTH][CRITICAL] Usuario autenticado con UID:", uid);
         
-        // Verificar en Firestore si es empresa
-        const checkUserType = async () => {
-          try {
-            // Primero buscar en users donde rol sea empresa
-            const userRef = query(collection(db, "users"), where("uid", "==", uid));
-            const userSnap = await getDocs(userRef);
-            
-            if (!userSnap.empty && userSnap.docs[0].data().rol === "empresa") {
-              // Es una empresa, redirigir al dashboard de empresa
-              console.log("Usuario autenticado como empresa (users), redirigiendo al backoffice");
-              
-              // Forzar recarga para asegurar datos actuales
-              window.location.href = '/backoffice';
-              return;
-            }
-            
-            // Si no se encuentra en users, buscar en empresas
-            const empresaRef = query(collection(db, "empresas"), where("uid", "==", uid));
-            const empresaSnap = await getDocs(empresaRef);
-            
-            // También buscar en empresa (singular)
-            const empresaSingularRef = query(collection(db, "empresa"), where("uid", "==", uid));
-            const empresaSingularSnap = await getDocs(empresaSingularRef);
-            
-            if (!empresaSnap.empty || !empresaSingularSnap.empty) {
-              // Es una empresa, redirigir al dashboard de empresa
-              console.log("Usuario autenticado como empresa, redirigiendo al backoffice");
-              
-              // Forzar recarga para asegurar datos actuales
-              window.location.href = '/backoffice';
-            } else {
-              // Es un usuario normal, redirigir al dashboard de usuario
-              console.log("Usuario autenticado como cliente, redirigiendo al dashboard");
-              
-              // Forzar recarga para asegurar datos actuales
-              window.location.href = '/dashboard';
-            }
-          } catch (error) {
-            console.error("Error al verificar tipo de usuario:", error);
-            // Por defecto, redirigir al dashboard principal
-            navigate('/dashboard');
+        // COMPROBACIÓN PRELIMINAR INMEDIATA
+        // Esto es crítico: revisamos localStorage primero para redirección inmediata
+        const cachedUserType = localStorage.getItem('userType');
+        const cachedUid = localStorage.getItem('uid');
+        
+        if (cachedUserType === 'empresa' && cachedUid === uid) {
+          console.log("[FASTPATH][CRITICAL] ⚡ EMPRESA EN CACHÉ. Redirigiendo inmediatamente a backoffice");
+          setUserType('empresa');
+          
+          const currentPath = window.location.pathname;
+          if (currentPath === "/" || currentPath === "/home") {
+            navigate("/backoffice", { replace: true });
           }
-        };
+          
+          // Aún verificamos en segundo plano para mantener actualizada la información
+          slowTimeout = setTimeout(() => setSlowConnection(true), 6000);
+          verificarTipoUsuario(uid, true);
+          return;
+        }
         
-        checkUserType();
+        slowTimeout = setTimeout(() => setSlowConnection(true), 6000);
+        verificarTipoUsuario(uid, false);
+      } else {
+        setCheckingUser(false);
+        setUserType('');
+        localStorage.removeItem('userType');
+        localStorage.removeItem('uid');
       }
     });
+
+    // Función para verificar el tipo de usuario
+    const verificarTipoUsuario = async (uid, esVerificacionEnSegundoPlano = false) => {
+      try {
+        console.log(`[DEBUG][CRITICAL] Verificando tipo de usuario para UID: ${uid}`);
+        
+        // SOLUCIÓN DIRECTA: Primero intentamos ver si es una empresa buscando en todas las colecciones
+        let isEmpresaConfirmed = false;
+        
+        // 1. Buscar en la colección empresas (búsqueda crítica)
+        const empresasSnap = await getDocs(query(collection(db, "empresas"), where("uid", "==", uid)));
+        if (!empresasSnap.empty) {
+          console.log("[DEBUG][CRITICAL] ✓ CONFIRMADO: Es empresa por empresas.uid");
+          isEmpresaConfirmed = true;
+        } else {
+          // 2. Buscar por userId en empresas
+          const empresasUserIdSnap = await getDocs(query(collection(db, "empresas"), where("userId", "==", uid)));
+          if (!empresasUserIdSnap.empty) {
+            console.log("[DEBUG][CRITICAL] ✓ CONFIRMADO: Es empresa por empresas.userId");
+            isEmpresaConfirmed = true;
+          } else {
+            // 3. Buscar en la colección empresa singular
+            const empresaSnap = await getDocs(query(collection(db, "empresa"), where("uid", "==", uid)));
+            if (!empresaSnap.empty) {
+              console.log("[DEBUG][CRITICAL] ✓ CONFIRMADO: Es empresa por empresa.uid");
+              isEmpresaConfirmed = true;
+            } else {
+              // 4. Buscar por userId en empresa singular
+              const empresaUserIdSnap = await getDocs(query(collection(db, "empresa"), where("userId", "==", uid)));
+              if (!empresaUserIdSnap.empty) {
+                console.log("[DEBUG][CRITICAL] ✓ CONFIRMADO: Es empresa por empresa.userId");
+                isEmpresaConfirmed = true;
+              }
+            }
+          }
+        }
+        
+        // Si todavía no está confirmado, vamos a la colección de usuarios como último recurso
+        if (!isEmpresaConfirmed) {
+          const userSnap = await getDocs(query(collection(db, "users"), where("uid", "==", uid)));
+          if (!userSnap.empty) {
+            const userData = userSnap.docs[0].data();
+            console.log("[DEBUG][CRITICAL] Datos de usuario:", JSON.stringify(userData, null, 2));
+            
+            if (
+              userData.rol === "empresa" ||
+              userData.role === "empresa" ||
+              userData.type === "company" ||
+              userData.tipo === "empresa" ||
+              userData.isCompany === true ||
+              !!userData.companyName ||
+              !!userData.nick
+            ) {
+              console.log("[DEBUG][CRITICAL] ✓ CONFIRMADO: Es empresa por atributos en users");
+              isEmpresaConfirmed = true;
+            }
+          }
+        }
+        
+        // DECISIÓN FINAL
+        console.log("[DEBUG][CRITICAL] ⭐ RESULTADO FINAL: " + (isEmpresaConfirmed ? "ES EMPRESA" : "NO ES EMPRESA"));
+        
+        // Guardamos el tipo en localStorage de forma FORZADA si es empresa
+        const tipo = isEmpresaConfirmed ? 'empresa' : 'usuario';
+        localStorage.setItem('userType', tipo);
+        localStorage.setItem('uid', uid);
+        setUserType(tipo);
+        
+        // Redirigimos SIEMPRE si es empresa para evitar problemas
+        if (isEmpresaConfirmed) {
+          if (!esVerificacionEnSegundoPlano) {
+            console.log("[NAVIGATE][FORCED] REDIRIGIENDO A BACKOFFICE como empresa");
+            navigate("/backoffice", { replace: true });
+          } else {
+            console.log("[BACKGROUND][FORCED] Se detectó empresa en verificación de fondo");
+          }
+        } else if (!esVerificacionEnSegundoPlano) {
+          console.log("[NAVIGATE] Redirigiendo como usuario normal");
+          navigate("/dashboard", { replace: true });
+        }
+      } catch (error) {
+        console.error("[ERROR][CRITICAL] Error al verificar tipo de usuario:", error);
+        if (!esVerificacionEnSegundoPlano) {
+          // En caso de error, intentar usar la caché si existe
+          const cachedType = localStorage.getItem('userType');
+          if (cachedType === 'empresa') {
+            console.log("[ERROR][RECOVERY] Usando caché para redirigir a backoffice");
+            navigate("/backoffice", { replace: true });
+          } else {
+            console.log("[ERROR][FALLBACK] Redirigiendo a dashboard por defecto");
+            setUserType('usuario');
+            navigate("/dashboard", { replace: true });
+          }
+        }
+      } finally {
+        if (!esVerificacionEnSegundoPlano) {
+          setCheckingUser(false);
+        }
+        clearTimeout(slowTimeout);
+      }
+    };
     
-    // Limpiar el listener cuando el componente se desmonte
-    return () => unsubscribe();
-  }, [navigate]);
+    // Función para redirigir según el tipo de usuario
+    const redirigirSegunTipo = (tipo) => {
+      const currentPath = window.location.pathname;
+      // Solo redirigimos si estamos en la ruta principal
+      if (currentPath === "/" || currentPath === "/home") {
+        console.log(`[NAVIGATE] Redirigiendo como ${tipo} a ${tipo === 'empresa' ? '/backoffice' : '/dashboard'}`);
+        navigate(tipo === 'empresa' ? "/backoffice" : "/dashboard", { replace: true });
+      } else {
+        console.log(`[NAVIGATE] No se redirije porque estamos en ${currentPath}`);
+      }
+    };
+    
+    return () => {
+      unsubscribe();
+      clearTimeout(slowTimeout);
+    };
+  }, [navigate, auth]);
 
   useEffect(() => {
     const fetchActiveRequests = async () => {
@@ -101,309 +233,44 @@ const Home = () => {
     fetchActiveRequests();
   }, []);
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
-      {/* Header */}
-      <header className="bg-white/80 backdrop-blur-md border-b border-gray-200 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center space-x-2">
-              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-                <Package className="w-5 h-5 text-white" />
-              </div>
-              <span className="text-2xl font-bold text-gray-900">Ferry</span>
-            </div>
-            
-            <div className="flex items-center space-x-4">
-              <Link to="/demo">
-                <Button variant="outline" className="hidden sm:flex">
-                  <Play className="w-4 h-4 mr-2" />
-                  Ver Demo
-                </Button>
-              </Link>
-              <Link to="/auth">
-                <Button>
-                  Iniciar Sesión
-                </Button>
-              </Link>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* Hero Section */}
-      <section className="relative py-20 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto">
-          <div className="text-center">
-            <h1 className="text-4xl sm:text-6xl font-bold text-gray-900 mb-6">
-              La plataforma que conecta
-              <span className="text-blue-600"> profesionales</span> con
-              <span className="text-purple-600"> proveedores</span>
-            </h1>
-            <p className="text-xl text-gray-600 mb-4 max-w-3xl mx-auto">
-              Solicita herramientas y materiales, recibe cotizaciones en tiempo real y elige la mejor opción. Todo en una sola app.
+  if (checkingUser) {
+    // Loader o pantalla en blanco mientras se verifica el tipo de usuario
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-purple-50">
+        <div className="text-center">
+          <div className="w-16 h-16 mx-auto mb-6 animate-spin rounded-full border-4 border-blue-300 border-t-blue-600"></div>
+          <p className="text-lg text-gray-600">Verificando tu cuenta...</p>
+          {userType && (
+            <p className="mt-2 text-sm text-blue-600">
+              Se ha detectado que eres {userType === 'empresa' ? 'una empresa' : 'un usuario'}. Redirigiendo...
             </p>
-
-            <div className="mb-8 flex justify-center">
-              <div className="bg-blue-100 text-blue-800 rounded-full px-5 py-2 font-semibold text-lg flex items-center">
-                <Package className="w-5 h-5 mr-2" />
-                Solicitudes activas: <span className="ml-2 text-2xl font-bold">{activeRequestsCount}</span>
+          )}
+          {slowConnection && (
+            <div className="mt-6 px-4 py-3 bg-red-100 text-red-700 rounded-lg shadow font-semibold animate-pulse">
+              <p>Tu conexión a internet es lenta o inestable.</p>
+              <div className="mt-3 flex flex-col space-y-2">
+                <Button 
+                  variant="outline" 
+                  className="bg-white border-blue-500 text-blue-700"
+                  onClick={() => navigate("/backoffice", { replace: true })}
+                >
+                  Ir a Panel de Empresa
+                </Button>
+                <Button 
+                  variant="outline" 
+                  className="bg-white"
+                  onClick={() => navigate("/dashboard", { replace: true })}
+                >
+                  Ir a Panel de Usuario
+                </Button>
               </div>
             </div>
-            
-            <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <Link to="/formulario-supremo">
-                <Button size="lg" className="bg-purple-600 hover:bg-purple-700 text-lg px-8 py-4">
-                  <Package className="w-5 h-5 mr-2" />
-                  Formulario Supremo
-                </Button>
-              </Link>
-              <Link to="/demo">
-                <Button size="lg" className="bg-blue-600 hover:bg-blue-700 text-lg px-8 py-4">
-                  <Play className="w-5 h-5 mr-2" />
-                  Probar Demo Gratis
-                </Button>
-              </Link>
-              <Link to="/auth">
-                <Button size="lg" variant="outline" className="text-lg px-8 py-4">
-                  Comenzar Ahora
-                  <ArrowRight className="w-5 h-5 ml-2" />
-                </Button>
-              </Link>
-            </div>
-          </div>
+          )}
         </div>
-      </section>
-
-      {/* Features Section */}
-      <section className="py-20 bg-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl font-bold text-gray-900 mb-4">
-              ¿Por qué elegir Ferry?
-            </h2>
-            <p className="text-xl text-gray-600">
-              Simplificamos el proceso de compra para profesionales
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow">
-              <CardContent className="p-8 text-center">
-                <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                  <Package className="w-8 h-8 text-blue-600" />
-                </div>
-                <h3 className="text-xl font-semibold mb-4">Solicitudes Inteligentes</h3>
-                <p className="text-gray-600">
-                  Crea solicitudes detalladas y recibe cotizaciones personalizadas de múltiples proveedores
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow">
-              <CardContent className="p-8 text-center">
-                <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                  <Users className="w-8 h-8 text-green-600" />
-                </div>
-                <h3 className="text-xl font-semibold mb-4">Red de Proveedores</h3>
-                <p className="text-gray-600">
-                  Accede a una amplia red de proveedores verificados y confiables en tu zona
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow">
-              <CardContent className="p-8 text-center">
-                <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                  <Truck className="w-8 h-8 text-purple-600" />
-                </div>
-                <h3 className="text-xl font-semibold mb-4">Entrega Rápida</h3>
-                <p className="text-gray-600">
-                  Recibe tus herramientas y materiales en tiempo record con seguimiento en tiempo real
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow">
-              <CardContent className="p-8 text-center">
-                <div className="w-16 h-16 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                  <Star className="w-8 h-8 text-yellow-600" />
-                </div>
-                <h3 className="text-xl font-semibold mb-4">Sistema de Puntos</h3>
-                <p className="text-gray-600">
-                  Gana puntos con cada compra y canjéalos por descuentos y beneficios exclusivos
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow">
-              <CardContent className="p-8 text-center">
-                <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                  <Shield className="w-8 h-8 text-red-600" />
-                </div>
-                <h3 className="text-xl font-semibold mb-4">Compra Segura</h3>
-                <p className="text-gray-600">
-                  Todas las transacciones están protegidas con tecnología de punta y garantía de devolución
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow">
-              <CardContent className="p-8 text-center">
-                <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                  <CheckCircle className="w-8 h-8 text-indigo-600" />
-                </div>
-                <h3 className="text-xl font-semibold mb-4">Calidad Garantizada</h3>
-                <p className="text-gray-600">
-                  Solo trabajamos con proveedores certificados que ofrecen productos de alta calidad
-                </p>
-              </CardContent>
-            </Card>
-          </div>
-        </div>
-      </section>
-
-      {/* Formulario Supremo Section */}
-      <section className="py-20 bg-gradient-to-r from-purple-500 to-pink-500">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex flex-col lg:flex-row items-center gap-8">
-            <div className="flex-1">
-              <h2 className="text-3xl font-bold text-white mb-4">
-                ¡Nuevo! Formulario Supremo
-              </h2>
-              <p className="text-xl text-white/90 mb-6">
-                Sube absolutamente todos los artículos uno por uno con todos sus detalles: nombre, especificaciones, fotos y más.
-              </p>
-              <ul className="space-y-3 mb-6">
-                <li className="flex items-center text-white">
-                  <CheckCircle className="w-5 h-5 mr-2 text-white" />
-                  Sube fotos directamente desde Google
-                </li>
-                <li className="flex items-center text-white">
-                  <CheckCircle className="w-5 h-5 mr-2 text-white" />
-                  Agrega especificaciones detalladas de cada artículo
-                </li>
-                <li className="flex items-center text-white">
-                  <CheckCircle className="w-5 h-5 mr-2 text-white" />
-                  Organiza tu catálogo completo de productos
-                </li>
-              </ul>
-              <Link to="/formulario-supremo">
-                <Button size="lg" className="bg-white text-purple-600 hover:bg-purple-50 text-lg px-8 py-4">
-                  Acceder al Formulario Supremo
-                  <ArrowRight className="w-5 h-5 ml-2" />
-                </Button>
-              </Link>
-            </div>
-            <div className="flex-1 mt-8 lg:mt-0">
-              <div className="bg-white rounded-xl shadow-2xl p-6 transform rotate-2">
-                <div className="flex items-center mb-4">
-                  <div className="w-3 h-3 bg-red-500 rounded-full mr-2"></div>
-                  <div className="w-3 h-3 bg-yellow-500 rounded-full mr-2"></div>
-                  <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-                </div>
-                <div className="space-y-3">
-                  <div className="h-10 bg-purple-100 rounded w-full"></div>
-                  <div className="flex space-x-3">
-                    <div className="h-24 w-24 bg-gray-200 rounded-lg"></div>
-                    <div className="flex-1 space-y-2">
-                      <div className="h-6 bg-gray-200 rounded w-3/4"></div>
-                      <div className="h-4 bg-gray-200 rounded w-1/2"></div>
-                      <div className="h-4 bg-gray-200 rounded w-2/3"></div>
-                    </div>
-                  </div>
-                  <div className="h-10 bg-purple-200 rounded w-1/3 ml-auto"></div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* CTA Section */}
-      <section className="py-20 bg-gradient-to-r from-blue-600 to-purple-600">
-        <div className="max-w-4xl mx-auto text-center px-4 sm:px-6 lg:px-8">
-          <h2 className="text-3xl font-bold text-white mb-6">
-            ¿Listo para optimizar tus compras profesionales?
-          </h2>
-          <p className="text-xl text-blue-100 mb-8">
-            Únete a miles de profesionales que ya confían en Ferry
-          </p>
-          
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link to="/formulario-supremo">
-              <Button size="lg" className="bg-white text-purple-600 hover:bg-purple-50 border-white text-lg px-8 py-4">
-                <Package className="w-5 h-5 mr-2" />
-                Formulario Supremo
-              </Button>
-            </Link>
-            <Link to="/demo">
-              <Button size="lg" variant="outline" className="bg-white/10 border-white text-white hover:bg-white/20 text-lg px-8 py-4">
-                <Play className="w-5 h-5 mr-2" />
-                Ver Demo Interactivo
-              </Button>
-            </Link>
-            <Link to="/auth">
-              <Button size="lg" className="bg-blue-800 hover:bg-blue-900 text-lg px-8 py-4">
-                Registrarse Gratis
-                <ArrowRight className="w-5 h-5 ml-2" />
-              </Button>
-            </Link>
-          </div>
-        </div>
-      </section>
-
-      {/* Footer */}
-      <footer className="bg-gray-900 text-white py-12">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
-            <div>
-              <div className="flex items-center space-x-2 mb-4">
-                <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-                  <Package className="w-5 h-5 text-white" />
-                </div>
-                <span className="text-xl font-bold">Ferry</span>
-              </div>
-              <p className="text-gray-400">
-                Conectando profesionales con los mejores proveedores del mercado.
-              </p>
-            </div>
-            
-            <div>
-              <h3 className="font-semibold mb-4">Producto</h3>
-              <ul className="space-y-2 text-gray-400">
-                <li><Link to="/demo" className="hover:text-white">Demo</Link></li>
-                <li><a href="#" className="hover:text-white">Características</a></li>
-                <li><a href="#" className="hover:text-white">Precios</a></li>
-              </ul>
-            </div>
-            
-            <div>
-              <h3 className="font-semibold mb-4">Empresa</h3>
-              <ul className="space-y-2 text-gray-400">
-                <li><a href="#" className="hover:text-white">Sobre nosotros</a></li>
-                <li><a href="#" className="hover:text-white">Contacto</a></li>
-                <li><a href="#" className="hover:text-white">Ayuda</a></li>
-              </ul>
-            </div>
-            
-            <div>
-              <h3 className="font-semibold mb-4">Legal</h3>
-              <ul className="space-y-2 text-gray-400">
-                <li><a href="#" className="hover:text-white">Términos</a></li>
-                <li><a href="#" className="hover:text-white">Privacidad</a></li>
-                <li><a href="#" className="hover:text-white">Cookies</a></li>
-              </ul>
-            </div>
-          </div>
-          
-          <div className="border-t border-gray-800 mt-12 pt-8 text-center text-gray-400">
-            <p>&copy; 2024 Ferry. Todos los derechos reservados.</p>
-          </div>
-        </div>
-      </footer>
-    </div>
-  );
+      </div>
+    );
+  }
+  // ...existing code...
 };
 
 export default Home;

@@ -1,0 +1,103 @@
+/* Estilos globales para el tema oscuro */
+
+/* Variables de color para modo oscuro */
+:root.dark {
+  --background-color: #111827;
+  --text-color: #f3f4f6;
+  --card-bg: #1f2937;
+  --input-bg: #374151;
+  --border-color: #4b5563;
+  --hover-color: #2d3748;
+  --primary-color: #60a5fa;
+}
+
+/* Variables de color para modo claro */
+:root {
+  --background-color: #f9fafb;
+  --text-color: #111827;
+  --card-bg: #ffffff;
+  --input-bg: #f3f4f6;
+  --border-color: #e5e7eb;
+  --hover-color: #f3f4f6;
+  --primary-color: #3b82f6;
+}
+
+/* Estilos base para el body */
+body {
+  background-color: var(--background-color);
+  color: var(--text-color);
+  transition: background-color 0.3s ease, color 0.3s ease;
+  margin: 0;
+  min-height: 100vh;
+}
+
+/* Tema oscuro directo para el body */
+body.dark-mode, 
+html.dark body {
+  background-color: #111827 !important;
+  color: #f3f4f6 !important;
+}
+
+/* Asegurar que todo el viewport tenga el fondo correcto */
+html.dark {
+  background-color: #111827;
+}
+
+html {
+  background-color: #f9fafb;
+}
+
+/* Asegurar que los contenedores principales tengan el fondo correcto */
+.dark .min-h-screen,
+html.dark .min-h-screen,
+body.dark-mode .min-h-screen {
+  background-color: #111827 !important;
+}
+
+/* Estilo para cards en modo oscuro */
+.dark-mode .card,
+html.dark .card {
+  background-color: var(--card-bg);
+  border-color: var(--border-color);
+}
+
+/* Estilo para inputs en modo oscuro */
+.dark-mode input,
+.dark-mode select,
+.dark-mode textarea,
+html.dark input,
+html.dark select,
+html.dark textarea {
+  background-color: var(--input-bg);
+  border-color: var(--border-color);
+  color: var(--text-color);
+}
+
+/* Estilos para botones */
+.dark-mode button:not([class*="bg-"]),
+html.dark button:not([class*="bg-"]) {
+  background-color: var(--card-bg);
+  color: var(--text-color);
+  border-color: var(--border-color);
+}
+
+/* Dialogs en modo oscuro */
+.dark-mode [role="dialog"],
+html.dark [role="dialog"] {
+  background-color: var(--card-bg);
+  color: var(--text-color);
+}
+
+/* Navbars y bottom navigation en modo oscuro */
+.dark-mode nav,
+html.dark nav {
+  background-color: var(--card-bg);
+  border-color: var(--border-color);
+}
+
+/* Transiciones suaves para cambios de tema */
+*,
+*::before,
+*::after {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}

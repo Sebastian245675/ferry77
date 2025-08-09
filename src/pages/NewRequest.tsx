@@ -1,5 +1,6 @@
 // ...existing code...
 import React, { useState, useEffect } from 'react';
+import '../quote-fixes.css'; // Importar estilos de arreglo
 // import eliminado porque ya está más abajo
 // import eliminado porque ya está más abajo
 
@@ -660,6 +661,9 @@ const NewRequest = () => {
         selectedCompanyIds: selectedCompanyIds, // Array plano de IDs para facilitar búsquedas
         acceptedAt: new Date().toISOString(),
         savings: Math.round(savings), // Guardar el ahorro total (redondeado)
+        totalAmount: bestQuotes
+          .filter(quote => quote.bestPrice && !isNaN(quote.bestPrice) && !quote.notFound)
+          .reduce((total, quote) => total + Number(quote.bestPrice) * (quote.quantity || 1), 0) // Calcular el costo total de la cotización
       };
 
       // Guardar la solicitud en Firestore SOLO cuando el usuario hace clic en aceptar
@@ -1070,8 +1074,8 @@ const NewRequest = () => {
                     className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white px-6 py-3 rounded-lg font-semibold flex-1 transition-all flex items-center justify-center shadow-md hover:shadow-lg"
                     onClick={() => {
                       // Al aceptar, guardar la opción seleccionada de cada producto como la mejor
-                      setBestQuotes(prev => prev.map(q => {
-                        if (q.options && q.options.length > 0 && (q.selectedOptionIndex || q.selectedOptionIndex === 0)) {
+                      const updatedQuotes = bestQuotes.map(q => {
+                        if (q.options && q.options.length > 0 && (q.selectedOptionIndex !== undefined || q.selectedOptionIndex === 0)) {
                           const sel = q.options[q.selectedOptionIndex];
                           // Asegurar que siempre exista un nombre de empresa
                           const companyName = sel.companyName || sel.companyId || "Empresa disponible";
@@ -1096,12 +1100,23 @@ const NewRequest = () => {
                           };
                         }
                         return q;
-                      }));
+                      });
+                      
+                      setBestQuotes(updatedQuotes);
+                      console.log("Cotizaciones actualizadas para guardar:", updatedQuotes);
+                      
+                      // Calcular total de la cotización
+                      const totalCost = updatedQuotes
+                        .filter(q => q.bestPrice && !isNaN(q.bestPrice) && !q.notFound)
+                        .reduce((total, q) => total + (Number(q.bestPrice) * (q.quantity || 1)), 0);
+                      
+                      console.log(`Total a guardar: $${totalCost}`);
+                      
                       setTimeout(() => handleAcceptBestQuote(), 100);
                     }}
                   >
                     <CheckCircle className="w-5 h-5 mr-2" />
-                    Aceptar cotización
+                    <span className="font-bold">Aceptar cotización</span>
                   </button>
                   <button
                     className="border border-gray-300 hover:bg-gray-50 text-gray-700 px-6 py-3 rounded-lg font-semibold flex-1 transition-all flex items-center justify-center shadow-sm hover:shadow"

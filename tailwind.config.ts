@@ -22,6 +22,9 @@ export default {
 			fontSize: {
 				'2xs': '0.625rem', // 10px
 			},
+			screens: {
+				'xs': '480px',
+			},
 			colors: {
 				border: 'hsl(var(--border))',
 				input: 'hsl(var(--input))',
@@ -126,6 +129,7 @@ export default {
 			animation: {
 				'accordion-down': 'accordion-down 0.2s ease-out',
 				'accordion-up': 'accordion-up 0.2s ease-out',
+				'fadeIn': 'fade-in 0.3s ease-out forwards',
 				'fade-in': 'fade-in 0.3s ease-out',
 				'slide-up': 'slide-up 0.3s ease-out',
 				'pulse-soft': 'pulse-soft 2s ease-in-out infinite'

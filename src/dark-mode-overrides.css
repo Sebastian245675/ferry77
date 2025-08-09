@@ -1,0 +1,78 @@
+/* Estilos directos para el tema oscuro */
+
+/* Estilos para el tema oscuro aplicados directamente a todo el documento */
+:root.dark, 
+html.dark,
+.dark-mode {
+  color-scheme: dark;
+}
+
+/* Forzar colores oscuros */
+html.dark body,
+body.dark-mode,
+html.dark .min-h-screen,
+.dark-mode .min-h-screen,
+html.dark [data-theme="dark"] {
+  background-color: #111827 !important;
+  color: #f3f4f6 !important;
+}
+
+/* Forzar el tema oscuro en todos los componentes clave */
+.dark .bg-gray-50,
+.dark .bg-white,
+html.dark .bg-gray-50,
+html.dark .bg-white,
+body.dark-mode .bg-gray-50,
+body.dark-mode .bg-white {
+  background-color: #1f2937 !important;
+}
+
+/* Agregar estilos específicos para cuando estamos en modo oscuro */
+.dark-bg {
+  background-color: #111827 !important;
+}
+
+/* Modificar los fondos de los componentes importantes */
+.dark .card,
+html.dark .card,
+body.dark-mode .card {
+  background-color: #1f2937 !important;
+  border-color: #374151 !important;
+  color: #f3f4f6 !important;
+}
+
+/* Sobrescribir todos los textos claros */
+.dark .text-gray-900,
+html.dark .text-gray-900,
+body.dark-mode .text-gray-900 {
+  color: #f3f4f6 !important;
+}
+
+.dark .text-gray-600,
+html.dark .text-gray-600,
+body.dark-mode .text-gray-600 {
+  color: #9ca3af !important;
+}
+
+/* Asegurarse de que el fondo de la página permanezca oscuro */
+@media (prefers-color-scheme: dark) {
+  body {
+    background-color: #111827;
+    color: #f3f4f6;
+  }
+}
+
+/* Asegurarse de que BottomNavigation tenga el fondo correcto */
+.dark .fixed,
+html.dark .fixed,
+body.dark-mode .fixed {
+  background-color: #1f2937 !important;
+  border-color: #374151 !important;
+}
+
+/* Configurar específicamente elementos principales */
+html.dark main,
+body.dark-mode main {
+  background-color: #111827 !important;
+  color: #f3f4f6 !important;
+}

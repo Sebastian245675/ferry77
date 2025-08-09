@@ -20,7 +20,7 @@ import Balance from "./pages/Balance";
 import Settings from "./pages/Settings";
 import Demo from "./pages/Demo";
 import NotFound from "./pages/NotFound";
-import DashboardEmpresas from "./backoficce/desboarempresas";
+import DashboardEmpresas from "./backoficce/DashboardEmpresas";
 import Profile from "./backoficce/Profile";
 import MessagesPage from "./pages/Messages";
 import MessagesBackoffice from "./backoficce/Messages";
@@ -33,15 +33,25 @@ import OrderChat from "./backoficce/OrderChat";
 import FormularioSupremo from "./pages/FormularioSupremo";
 import Reviews from "./backoficce/Reviews";
 import ProfilePage from "./pages/Profile";
-
+import Pagos from "./backoficce/Pagos";
+import InventoryManager from "./pages/InventoryManager";
+import DeliveryDashboard from "./pages/DeliveryDashboard";
+import DeliveryDetails from "./pages/DeliveryDetails";
+import DeliveryHistory from "./pages/DeliveryHistory";
+import DeliveryProfile from "./pages/DeliveryProfile";
+import DeliveryPriceProposal from "./pages/DeliveryPriceProposal";
+import UserDeliveryTracking from "./pages/UserDeliveryTracking";
+import CompanyDeliveryTracking from "./pages/CompanyDeliveryTracking";
 
 import { onAuthStateChanged } from "firebase/auth";
 import { auth } from "./lib/firebase";
 import { useEffect, useState } from "react";
+import { getThemePreference } from "./theme-utils";
 
 const App = () => {
   const [authChecked, setAuthChecked] = useState(false);
   const [user, setUser] = useState(null);
+  const [themeClass, setThemeClass] = useState(getThemePreference()); // Obtener preferencia de tema
 
   useEffect(() => {
     // Comprobar si hay datos de autenticación guardados en localStorage
@@ -65,12 +75,26 @@ const App = () => {
     return () => unsubscribe();
   }, []);
 
+  // Efecto para escuchar cambios en el tema
+  useEffect(() => {
+    const handleThemeChange = () => {
+      setThemeClass(getThemePreference());
+    };
+
+    // Escuchar cambios en el localStorage para el tema
+    window.addEventListener('storage', handleThemeChange);
+    
+    return () => {
+      window.removeEventListener('storage', handleThemeChange);
+    };
+  }, []);
+
   if (!authChecked) {
     // Pantalla de carga global mientras Firebase verifica la sesión
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className={`min-h-screen flex items-center justify-center ${themeClass === 'dark' ? 'bg-gray-900 text-white' : 'bg-gray-50 text-gray-900'}`}>
         <div className="w-12 h-12 border-4 border-primary-200 border-t-primary-600 rounded-full animate-spin"></div>
-        <span className="ml-4 text-gray-600 text-lg font-medium">Cargando sesión...</span>
+        <span className={`ml-4 text-lg font-medium ${themeClass === 'dark' ? 'text-gray-300' : 'text-gray-600'}`}>Cargando sesión...</span>
       </div>
     );
   }
@@ -80,9 +104,12 @@ const App = () => {
       <TooltipProvider>
         <Toaster />
         <Sonner />
-        <BrowserRouter>
-          <Routes>
-            <Route path="/formulario-supremo" element={<FormularioSupremo />} />
+        <div className={`app-container ${themeClass}-theme`}>
+          <BrowserRouter>
+            <Routes>
+              <Route path="/formulario-supremo" element={<FormularioSupremo />} />
+              {/* Special route for inventory management that doesn't require login */}
+              <Route path="/inventory-manager/:token" element={<InventoryManager />} />
             {!user ? (
               <>
                 <Route path="/auth" element={<Auth />} />
@@ -115,16 +142,29 @@ const App = () => {
                 <Route path="/backoffice/quotes" element={<PendingQuotes />} />
                 <Route path="/backoffice/quote-proposal" element={<QuoteProposal />} />
                 <Route path="/backoffice/order-tracking" element={<OrderTracking />} />
+                <Route path="/backoffice/pagos" element={<Pagos />} />
                 <Route path="/backoffice/order-chat" element={<OrderChat />} />
                 <Route path="/backoffice/reviews" element={<Reviews />} />
                 <Route path="/company-panel" element={<DashboardEmpresas />} />
                 <Route path="/order-status" element={<OrderStatus />} />
                 <Route path="/order-tracking" element={<OrderTracking />} />
+                {/* Rutas para repartidores */}
+                <Route path="/delivery-dashboard" element={<DeliveryDashboard />} />
+                <Route path="/delivery-details/:id" element={<DeliveryDetails />} />
+                <Route path="/delivery-history" element={<DeliveryHistory />} />
+                <Route path="/delivery-profile" element={<DeliveryProfile />} />
+                <Route path="/delivery-propose-fee/:id" element={<DeliveryPriceProposal />} />
+                
+                {/* Tracking de entregas */}
+                <Route path="/tracking/delivery/:id" element={<UserDeliveryTracking />} />
+                <Route path="/company/tracking/delivery/:id" element={<CompanyDeliveryTracking />} />
+                
                 <Route path="*" element={<NotFound />} />
               </>
             )}
           </Routes>
         </BrowserRouter>
+        </div>
       </TooltipProvider>
     </QueryClientProvider>
   );

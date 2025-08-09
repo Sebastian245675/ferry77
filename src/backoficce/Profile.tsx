@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import {
   User,
   Mail,
@@ -27,13 +28,22 @@ import {
   Trash2,
   Tag,
   Upload,
-  Loader2
+  Loader2,
+  X,
+  DollarSign,
+  Package,
+  Image,
+  Scale,
+  Link,
+  Copy,
+  ExternalLink
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { db, storage } from "../lib/firebase";
 import { doc, getDoc, setDoc, updateDoc, collection, getDocs, query, where } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { generateInventoryManagementToken, getInventoryManagementUrl } from "../lib/inventoryLinkService";
 
 
 // MOCK de datos de empresa
@@ -85,6 +95,8 @@ const Profile = () => {
   // Elimina el uso de useCompanyAuth
   // const { company, updateProfile } = useCompanyAuth();
   const [isEditing, setIsEditing] = useState(false);
+  const [isGeneratingLink, setIsGeneratingLink] = useState(false);
+  const [inventoryLink, setInventoryLink] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     companyName: "",
     category: "",
@@ -465,6 +477,63 @@ const Profile = () => {
       });
     }
   };
+  
+  // Función para generar un enlace de gestión de inventario
+  const handleGenerateInventoryLink = async () => {
+    try {
+      setIsGeneratingLink(true);
+      const auth = getAuth();
+      const user = auth.currentUser;
+      if (!user) {
+        toast({
+          title: "Error",
+          description: "Debes iniciar sesión para generar un enlace",
+          variant: "destructive"
+        });
+        return;
+      }
+      
+      const companyId = user.uid;
+      // Generar token válido por 48 horas
+      const token = await generateInventoryManagementToken(companyId, 48);
+      const fullUrl = getInventoryManagementUrl(token);
+      
+      setInventoryLink(fullUrl);
+      
+      toast({
+        title: "Enlace generado",
+        description: "Se ha generado un enlace para gestionar el inventario válido por 48 horas"
+      });
+    } catch (error) {
+      console.error("Error generando enlace:", error);
+      toast({
+        title: "Error",
+        description: "No se pudo generar el enlace de inventario",
+        variant: "destructive"
+      });
+    } finally {
+      setIsGeneratingLink(false);
+    }
+  };
+  
+  // Función para copiar el enlace al portapapeles
+  const handleCopyLink = () => {
+    if (!inventoryLink) return;
+    
+    navigator.clipboard.writeText(inventoryLink).then(() => {
+      toast({
+        title: "Enlace copiado",
+        description: "El enlace ha sido copiado al portapapeles"
+      });
+    }).catch(err => {
+      console.error("Error copiando al portapapeles:", err);
+      toast({
+        title: "Error",
+        description: "No se pudo copiar el enlace",
+        variant: "destructive"
+      });
+    });
+  };
 
   const handleInputChange = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -767,7 +836,7 @@ const Profile = () => {
             }
             
             // Para evitar problemas CORS en la verificación, usamos una Image en lugar de fetch
-            const img = new Image();
+            const img = new window.Image();
             let isAccessible = false;
             
             // Creamos una promesa para controlar el timeout
@@ -1265,151 +1334,221 @@ const Profile = () => {
               <CardHeader>
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
-                    <CardTitle className="text-lg sm:text-xl">Lista de Venta</CardTitle>
+                    <CardTitle className="text-lg sm:text-xl flex items-center gap-2">
+                      <Tag className="h-5 w-5 text-blue-600" />
+                      Lista de Venta
+                    </CardTitle>
                     <CardDescription className="text-sm">
                       Gestiona los productos y servicios que ofrece tu empresa
                     </CardDescription>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <Button 
-                      className="bg-green-600 hover:bg-green-700 text-white w-full sm:w-auto"
+                      className="bg-green-600 hover:bg-green-700 text-white w-full sm:w-auto flex-1 sm:flex-none"
                       onClick={handleImportSupremeList}
                     >
-                      Traer lista suprema
+                      <Tag className="mr-2 h-4 w-4" />
+                      <span className="text-xs sm:text-sm">Traer lista suprema</span>
                     </Button>
                     <Button 
-                      className="company-card text-white w-full sm:w-auto"
+                      className="company-card text-white w-full sm:w-auto flex-1 sm:flex-none"
                       onClick={() => setIsAddingProduct(!isAddingProduct)}
                     >
-                      <Plus className="mr-2 h-4 w-4" />
-                      {isAddingProduct ? "Cancelar" : "Agregar Producto"}
+                      {isAddingProduct ? (
+                        <><X className="mr-2 h-4 w-4" /><span className="text-xs sm:text-sm">Cancelar</span></>
+                      ) : (
+                        <><Plus className="mr-2 h-4 w-4" /><span className="text-xs sm:text-sm">Agregar Producto</span></>
+                      )}
+                    </Button>
+                    <Button 
+                      className="bg-blue-600 hover:bg-blue-700 text-white w-full sm:w-auto flex-1 sm:flex-none"
+                      onClick={handleGenerateInventoryLink}
+                      disabled={isGeneratingLink}
+                    >
+                      {isGeneratingLink ? (
+                        <><Loader2 className="mr-2 h-4 w-4 animate-spin" /><span className="text-xs sm:text-sm">Generando...</span></>
+                      ) : (
+                        <><Link className="mr-2 h-4 w-4" /><span className="text-xs sm:text-sm">Generar enlace de gestión</span></>
+                      )}
                     </Button>
                   </div>
                 </div>
               </CardHeader>
-              <CardContent>
+              <CardContent className="px-2 sm:px-6">
                 {isAddingProduct && (
-                  <Card className="mb-6 border-dashed border-2 p-4 bg-gradient-to-br from-blue-50 to-white shadow-lg">
-                    <CardContent className="p-0 space-y-4">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="animate-fadeIn">
+                    <Card className="mb-6 border-dashed border-2 bg-gradient-to-br from-blue-50 to-white shadow-lg overflow-hidden">
+                      <div className="bg-blue-600 p-3">
+                        <h3 className="text-white text-center font-medium text-sm sm:text-base">
+                          Nuevo Producto o Servicio
+                        </h3>
+                      </div>
+                      <CardContent className="p-3 sm:p-4 space-y-4">
+                        {/* Vista previa de imagen */}
+                        <div className="flex justify-center mb-4">
+                          <div className="relative w-24 h-24 rounded-lg border-2 border-dashed border-blue-300 flex items-center justify-center overflow-hidden bg-blue-50">
+                            {newProduct.image ? (
+                              <img 
+                                src={newProduct.image} 
+                                alt="Vista previa" 
+                                className="w-full h-full object-cover"
+                                onError={(e) => {
+                                  const target = e.target as HTMLImageElement;
+                                  target.src = "https://via.placeholder.com/100?text=Error";
+                                }}
+                              />
+                            ) : (
+                              <Camera className="h-8 w-8 text-blue-300" />
+                            )}
+                          </div>
+                        </div>
+                        
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="productName" className="text-sm font-medium flex items-center gap-2">
+                              <Package className="h-3.5 w-3.5 text-blue-600" />
+                              Nombre*
+                            </Label>
+                            <Input
+                              id="productName"
+                              value={newProduct.name}
+                              onChange={(e) => handleProductInputChange('name', e.target.value)}
+                              placeholder="Ej: Mesa de madera"
+                              className="text-sm bg-white/80 border-blue-200 focus:border-blue-400"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="productPrice" className="text-sm font-medium flex items-center gap-2">
+                              <DollarSign className="h-3.5 w-3.5 text-blue-600" />
+                              Precio*
+                            </Label>
+                            <Input
+                              id="productPrice"
+                              type="number"
+                              value={newProduct.price.toString()}
+                              onChange={(e) => handleProductInputChange('price', Number(e.target.value))}
+                              placeholder="0.00"
+                              className="text-sm bg-white/80 border-blue-200 focus:border-blue-400"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="productCategory" className="text-sm font-medium flex items-center gap-2">
+                              <Tag className="h-3.5 w-3.5 text-blue-600" />
+                              Categoría
+                            </Label>
+                            <Select
+                              value={newProduct.category}
+                              onValueChange={(value) => handleProductInputChange('category', value)}
+                            >
+                              <SelectTrigger className="text-sm bg-white/80 border-blue-200 focus:border-blue-400">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {productCategories.map((category) => (
+                                  <SelectItem key={category.value} value={category.value} className="flex items-center gap-2">
+                                    {category.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="productUnit" className="text-sm font-medium flex items-center gap-2">
+                              <Scale className="h-3.5 w-3.5 text-blue-600" />
+                              Unidad
+                            </Label>
+                            <Select
+                              value={newProduct.unit}
+                              onValueChange={(value) => handleProductInputChange('unit', value)}
+                            >
+                              <SelectTrigger className="text-sm bg-white/80 border-blue-200 focus:border-blue-400">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {productUnits.map((unit) => (
+                                  <SelectItem key={unit.value} value={unit.value}>
+                                    {unit.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
                         <div className="space-y-2">
-                          <Label htmlFor="productName" className="text-sm font-medium">Nombre del Producto/Servicio*</Label>
+                          <Label htmlFor="productImageUrl" className="text-sm font-medium flex items-center gap-2">
+                            <Image className="h-3.5 w-3.5 text-blue-600" />
+                            Enlace de imagen
+                          </Label>
                           <Input
-                            id="productName"
-                            value={newProduct.name}
-                            onChange={(e) => handleProductInputChange('name', e.target.value)}
-                            placeholder="Ej: Mesa de madera"
+                            id="productImageUrl"
+                            value={newProduct.image || ''}
+                            onChange={(e) => handleProductInputChange('image', e.target.value)}
+                            placeholder="https://ejemplo.com/imagen.jpg"
                             className="text-sm bg-white/80 border-blue-200 focus:border-blue-400"
-
                           />
                         </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="productPrice" className="text-sm font-medium">Precio*</Label>
-                          <Input
-                            id="productPrice"
-                            type="number"
-                            value={newProduct.price.toString()}
-                            onChange={(e) => handleProductInputChange('price', Number(e.target.value))}
-                            placeholder="0.00"
-                            className="text-sm bg-white/80 border-blue-200 focus:border-blue-400"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="productCategory" className="text-sm font-medium">Categoría</Label>
-                          <Select
-                            value={newProduct.category}
-                            onValueChange={(value) => handleProductInputChange('category', value)}
-
+                        <div className="pt-2 flex flex-col xs:flex-row gap-2 justify-end">
+                          <Button 
+                            variant="outline"
+                            onClick={() => setIsAddingProduct(false)}
+                            className="border-blue-200 text-blue-700 hover:bg-blue-50"
                           >
-                            <SelectTrigger className="text-sm bg-white/80 border-blue-200 focus:border-blue-400">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {productCategories.map((category) => (
-                                <SelectItem key={category.value} value={category.value}>
-                                  {category.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="productUnit" className="text-sm font-medium">Unidad</Label>
-                          <Select
-                            value={newProduct.unit}
-                            onValueChange={(value) => handleProductInputChange('unit', value)}
-
+                            <X className="mr-1 h-4 w-4" />
+                            Cancelar
+                          </Button>
+                          <Button 
+                            onClick={handleAddProduct} 
+                            className="company-card text-white shadow-md hover:scale-105 transition-transform"
                           >
-                            <SelectTrigger className="text-sm bg-white/80 border-blue-200 focus:border-blue-400">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {productUnits.map((unit) => (
-                                <SelectItem key={unit.value} value={unit.value}>
-                                  {unit.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                            <Save className="mr-2 h-4 w-4" />
+                            Guardar Producto
+                          </Button>
                         </div>
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="productImageUrl" className="text-sm font-medium">Enlace de imagen</Label>
-                        <Input
-                          id="productImageUrl"
-                          value={newProduct.image || ''}
-                          onChange={(e) => handleProductInputChange('image', e.target.value)}
-                          placeholder="https://ejemplo.com/imagen.jpg"
-                          className="text-sm bg-white/80 border-blue-200 focus:border-blue-400"
-                        />
-                      </div>
-                      <div className="flex justify-end">
-                        <Button 
-                          onClick={handleAddProduct} 
-                          className="company-card text-white shadow-md hover:scale-105 transition-transform"
-                        >
-                          Guardar Producto
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
+                      </CardContent>
+                    </Card>
+                  </div>
                 )}
                 {isLoadingProducts ? (
-                  <div className="py-10 text-center">
-                    <p className="text-gray-500">Cargando productos...</p>
+                  <div className="py-10 text-center bg-white/70 rounded-xl shadow-sm backdrop-blur-sm animate-pulse">
+                    <Loader2 className="h-8 w-8 mx-auto text-blue-500 animate-spin mb-2" />
+                    <p className="text-blue-600 font-medium">Cargando productos...</p>
                   </div>
                 ) : products.length === 0 ? (
                   <div className="py-10 text-center border border-dashed rounded-lg bg-gradient-to-br from-blue-50 to-white">
-                    <Tag className="h-10 w-10 mx-auto text-gray-400 mb-2" />
-                    <p className="text-gray-500">Aún no has agregado productos o servicios</p>
-                    <p className="text-gray-400 text-sm">Haz clic en "Agregar Producto" para comenzar</p>
+                    <div className="p-4 bg-blue-100/50 rounded-full w-16 h-16 mx-auto mb-3 flex items-center justify-center">
+                      <Tag className="h-10 w-10 text-blue-500" />
+                    </div>
+                    <p className="text-gray-700 font-medium">Aún no has agregado productos o servicios</p>
+                    <p className="text-gray-500 text-sm mt-2">Haz clic en "Agregar Producto" para comenzar</p>
+                    <Button 
+                      onClick={() => setIsAddingProduct(true)} 
+                      className="mt-4 bg-blue-600 hover:bg-blue-700 text-white"
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      Agregar mi primer producto
+                    </Button>
                   </div>
                 ) : (
-                  <div className="overflow-x-auto rounded-lg shadow-sm bg-white/80">
-                    <table className="w-full min-w-[600px]">
-                      <thead className="bg-gradient-to-r from-blue-100 to-blue-50">
-                        <tr>
-                          <th className="py-3 px-4 text-left text-xs font-semibold text-blue-700 uppercase tracking-wider">#</th>
-                          <th className="py-3 px-4 text-left text-xs font-semibold text-blue-700 uppercase tracking-wider">Producto/Servicio</th>
-                          <th className="py-3 px-4 text-left text-xs font-semibold text-blue-700 uppercase tracking-wider">Categoría</th>
-                          <th className="py-3 px-4 text-left text-xs font-semibold text-blue-700 uppercase tracking-wider">Precio</th>
-                          <th className="py-3 px-4 text-left text-xs font-semibold text-blue-700 uppercase tracking-wider">Stock</th>
-                          <th className="py-3 px-4 text-left text-xs font-semibold text-blue-700 uppercase tracking-wider">Última modificación</th>
-                          <th className="py-3 px-4 text-left text-xs font-semibold text-blue-700 uppercase tracking-wider">Acciones</th>
-                        </tr>
-                      </thead>
-                      <tbody className="bg-white divide-y divide-blue-50">
+                  <>
+                    {/* Vista para móviles */}
+                    <div className="sm:hidden">
+                      <div className="space-y-3">
                         {products.map((product, index) => (
-                          <tr key={product.id} className="hover:bg-blue-50 transition-colors">
-                            <td className="py-3 px-4 whitespace-nowrap text-sm text-blue-500 font-semibold">{index + 1}</td>
-                            <td className="py-3 px-4 whitespace-nowrap">
-                              <div className="flex items-center gap-2">
+                          <div 
+                            key={product.id}
+                            className={`rounded-lg shadow-sm border overflow-hidden hover:shadow-md transition-shadow ${
+                              (product.stock === 0 || product.stock === null) 
+                                ? "bg-white/95 border-red-100" 
+                                : "bg-white border-blue-100"
+                            }`}
+                          >
+                            <div className="flex items-center p-3">
+                              <div className="relative w-16 h-16 rounded-md overflow-hidden border border-blue-100 flex-shrink-0">
                                 {product.image ? (
                                   <img
                                     src={product.image}
                                     alt={product.name}
-                                    className="w-10 h-10 object-cover rounded border border-blue-200"
-                                    style={{ minWidth: 40, minHeight: 40 }}
+                                    className="w-full h-full object-cover"
                                     onError={e => {
                                       const target = e.target as HTMLImageElement;
                                       target.onerror = null;
@@ -1417,93 +1556,36 @@ const Profile = () => {
                                     }}
                                   />
                                 ) : (
-                                  <img
-                                    src="https://via.placeholder.com/40?text=No+img"
-                                    alt="Sin imagen"
-                                    className="w-10 h-10 object-cover rounded border border-blue-200"
-                                    style={{ minWidth: 40, minHeight: 40 }}
-                                  />
+                                  <div className="w-full h-full bg-blue-50 flex items-center justify-center">
+                                    <Package className="h-6 w-6 text-blue-300" />
+                                  </div>
                                 )}
-                                <div>
-                                  <div className="text-sm font-bold text-gray-900">{product.name}</div>
-                                  <div className="text-xs text-gray-500 line-clamp-2 max-w-xs">{product.description}</div>
+                                <span className="absolute top-0 left-0 bg-blue-600 text-white text-xs px-1 rounded-br-md font-medium">
+                                  {index + 1}
+                                </span>
+                              </div>
+                              
+                              <div className="ml-3 flex-1">
+                                <div className="flex items-center">
+                                  <h4 className="font-bold text-gray-900 line-clamp-1">{product.name}</h4>
+                                  {(product.stock === 0 || product.stock === null) && (
+                                    <Badge className="ml-2 bg-red-100 text-red-800 border-red-200 text-[10px] whitespace-nowrap">
+                                      Fuera de stock
+                                    </Badge>
+                                  )}
+                                </div>
+                                <div className="flex items-center mt-1">
+                                  <Badge variant="outline" className="text-xs capitalize bg-blue-50 text-blue-600 border-blue-200 mr-2">
+                                    {product.category}
+                                  </Badge>
+                                  <span className="text-xs text-gray-500">
+                                    {product.updatedAt
+                                      ? new Date(product.updatedAt).toLocaleDateString()
+                                      : 'Sin modificar'}
+                                  </span>
                                 </div>
                               </div>
-                            </td>
-                            <td className="py-3 px-4 whitespace-nowrap text-sm">
-                              <Badge variant="outline" className="text-xs capitalize bg-blue-100 text-blue-700 border-blue-200">
-                                {product.category}
-                              </Badge>
-                            </td>
-                            <td className="py-3 px-4 whitespace-nowrap">
-                              <div className="text-sm font-bold text-blue-700">
-                                <input
-                                  type="number"
-                                  value={product.price}
-                                  min={0}
-                                  className="w-20 px-2 py-1 border rounded text-blue-700 bg-blue-50"
-                                  onBlur={async e => {
-                                    const newPrice = Number(e.target.value);
-                                    const updated = products.map((p, i) => i === index ? { ...p, price: newPrice, updatedAt: new Date().toISOString() } : p);
-                                    setProducts(updated);
-                                    // Guardar en Firestore
-                                    const auth = getAuth();
-                                    const user = auth.currentUser;
-                                    if (!user) return;
-                                    const companyId = user.uid;
-                                    const productDoc = doc(db, "listados", companyId);
-                                    await updateDoc(productDoc, { 
-                                      products: updated, 
-                                      ubicacion: formData.ubicompleta,
-                                      companyName: formData.companyName,
-                                      updatedAt: new Date() 
-                                    });
-                                  }}
-                                  onChange={e => {
-                                    const newPrice = Number(e.target.value);
-                                    setProducts(products => products.map((p, i) => i === index ? { ...p, price: newPrice, updatedAt: new Date().toISOString() } : p));
-                                  }}
-                                />
-                              </div>
-                              <div className="text-xs text-gray-500">por {product.unit}</div>
-                            </td>
-                            <td className="py-3 px-4 whitespace-nowrap">
-                              <div className="text-sm font-bold text-blue-700">
-                                <input
-                                  type="number"
-                                  value={product.stock ?? 0}
-                                  min={0}
-                                  className="w-20 px-2 py-1 border rounded text-blue-700 bg-blue-50"
-                                  onBlur={async e => {
-                                    const newStock = Number(e.target.value);
-                                    const updated = products.map((p, i) => i === index ? { ...p, stock: newStock, updatedAt: new Date().toISOString() } : p);
-                                    setProducts(updated);
-                                    // Guardar en Firestore
-                                    const auth = getAuth();
-                                    const user = auth.currentUser;
-                                    if (!user) return;
-                                    const companyId = user.uid;
-                                    const productDoc = doc(db, "listados", companyId);
-                                    await updateDoc(productDoc, { 
-                                      products: updated, 
-                                      ubicacion: formData.ubicompleta,
-                                      companyName: formData.companyName,
-                                      updatedAt: new Date() 
-                                    });
-                                  }}
-                                  onChange={e => {
-                                    const newStock = Number(e.target.value);
-                                    setProducts(products => products.map((p, i) => i === index ? { ...p, stock: newStock, updatedAt: new Date().toISOString() } : p));
-                                  }}
-                                />
-                              </div>
-                            </td>
-                            <td className="py-3 px-4 whitespace-nowrap text-xs text-gray-500">
-                              {product.updatedAt
-                                ? new Date(product.updatedAt).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })
-                                : 'Sin modificar'}
-                            </td>
-                            <td className="py-3 px-4 whitespace-nowrap text-sm">
+                              
                               <Button 
                                 variant="ghost" 
                                 size="sm"
@@ -1513,12 +1595,251 @@ const Profile = () => {
                               >
                                 <Trash2 className="h-4 w-4" />
                               </Button>
-                            </td>
-                          </tr>
+                            </div>
+                            
+                            <div className="border-t border-blue-50 px-3 py-2 bg-blue-50/40 flex justify-between items-center">
+                              <div>
+                                <div className="text-xs text-gray-500 mb-1">Precio por {product.unit}</div>
+                                <div className="flex items-center">
+                                  <DollarSign className="h-3 w-3 text-blue-600 mr-1" />
+                                  <input
+                                    type="number"
+                                    value={product.price}
+                                    min={0}
+                                    className="w-16 px-2 py-1 border rounded text-blue-700 bg-blue-50 text-sm font-medium"
+                                    onBlur={async e => {
+                                      const newPrice = Number(e.target.value);
+                                      const updated = products.map((p, i) => i === index ? { ...p, price: newPrice, updatedAt: new Date().toISOString() } : p);
+                                      setProducts(updated);
+                                      // Guardar en Firestore
+                                      const auth = getAuth();
+                                      const user = auth.currentUser;
+                                      if (!user) return;
+                                      const companyId = user.uid;
+                                      const productDoc = doc(db, "listados", companyId);
+                                      await updateDoc(productDoc, { 
+                                        products: updated, 
+                                        ubicacion: formData.ubicompleta,
+                                        companyName: formData.companyName,
+                                        updatedAt: new Date() 
+                                      });
+                                    }}
+                                    onChange={e => {
+                                      const newPrice = Number(e.target.value);
+                                      setProducts(products => products.map((p, i) => i === index ? { ...p, price: newPrice, updatedAt: new Date().toISOString() } : p));
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-xs text-gray-500 mb-1">Stock</div>
+                                <div className="flex items-center">
+                                  <Package className="h-3 w-3 text-blue-600 mr-1" />
+                                  <div className="flex items-center">
+                                    <input
+                                      type="number"
+                                      value={product.stock ?? 0}
+                                      min={0}
+                                      className={`w-16 px-2 py-1 border rounded text-sm font-medium ${
+                                        (product.stock === 0 || product.stock === null) 
+                                          ? "bg-red-50 text-red-700 border-red-200" 
+                                          : "bg-blue-50 text-blue-700 border-blue-200"
+                                      }`}
+                                      onBlur={async e => {
+                                        const newStock = Number(e.target.value);
+                                        const updated = products.map((p, i) => i === index ? { ...p, stock: newStock, updatedAt: new Date().toISOString() } : p);
+                                        setProducts(updated);
+                                        // Guardar en Firestore
+                                        const auth = getAuth();
+                                        const user = auth.currentUser;
+                                        if (!user) return;
+                                        const companyId = user.uid;
+                                        const productDoc = doc(db, "listados", companyId);
+                                        await updateDoc(productDoc, { 
+                                          products: updated, 
+                                          ubicacion: formData.ubicompleta,
+                                          companyName: formData.companyName,
+                                          updatedAt: new Date() 
+                                        });
+                                      }}
+                                      onChange={e => {
+                                        const newStock = Number(e.target.value);
+                                        setProducts(products => products.map((p, i) => i === index ? { ...p, stock: newStock, updatedAt: new Date().toISOString() } : p));
+                                      }}
+                                    />
+                                    {(product.stock === 0 || product.stock === null) && (
+                                      <Badge className="ml-2 bg-red-100 text-red-800 border-red-200 text-[10px]">
+                                        Agotado
+                                      </Badge>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
                         ))}
-                      </tbody>
-                    </table>
-                  </div>
+                      </div>
+                    </div>
+                  
+                    {/* Vista para tablet y desktop */}
+                    <div className="hidden sm:block overflow-x-auto rounded-lg shadow-sm bg-white/90">
+                      <table className="w-full min-w-[600px]">
+                        <thead className="bg-gradient-to-r from-blue-100 to-blue-50">
+                          <tr>
+                            <th className="py-3 px-4 text-left text-xs font-semibold text-blue-700 uppercase tracking-wider">#</th>
+                            <th className="py-3 px-4 text-left text-xs font-semibold text-blue-700 uppercase tracking-wider">Producto/Servicio</th>
+                            <th className="py-3 px-4 text-left text-xs font-semibold text-blue-700 uppercase tracking-wider">Categoría</th>
+                            <th className="py-3 px-4 text-left text-xs font-semibold text-blue-700 uppercase tracking-wider">Precio</th>
+                            <th className="py-3 px-4 text-left text-xs font-semibold text-blue-700 uppercase tracking-wider">Stock</th>
+                            <th className="py-3 px-4 text-left text-xs font-semibold text-blue-700 uppercase tracking-wider">Última modificación</th>
+                            <th className="py-3 px-4 text-left text-xs font-semibold text-blue-700 uppercase tracking-wider">Acciones</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-blue-50">
+                          {products.map((product, index) => (
+                            <tr 
+                              key={product.id} 
+                              className={`
+                                transition-colors
+                                ${(product.stock === 0 || product.stock === null) 
+                                  ? "bg-red-50/40 hover:bg-red-50/70" 
+                                  : "hover:bg-blue-50"}
+                              `}
+                            >
+                              <td className="py-3 px-4 whitespace-nowrap text-sm text-blue-500 font-semibold">{index + 1}</td>
+                              <td className="py-3 px-4 whitespace-nowrap">
+                                <div className="flex items-center gap-2">
+                                  {product.image ? (
+                                    <img
+                                      src={product.image}
+                                      alt={product.name}
+                                      className="w-10 h-10 object-cover rounded border border-blue-200"
+                                      style={{ minWidth: 40, minHeight: 40 }}
+                                      onError={e => {
+                                        const target = e.target as HTMLImageElement;
+                                        target.onerror = null;
+                                        target.src = "https://via.placeholder.com/40?text=No+img";
+                                      }}
+                                    />
+                                  ) : (
+                                    <div className="w-10 h-10 bg-blue-50 rounded border border-blue-200 flex items-center justify-center">
+                                      <Package className="h-5 w-5 text-blue-300" />
+                                    </div>
+                                  )}
+                                  <div>
+                                    <div className="flex items-center gap-2">
+                                      <div className="text-sm font-bold text-gray-900">{product.name}</div>
+                                      {(product.stock === 0 || product.stock === null) && (
+                                        <Badge variant="outline" className="bg-red-100 text-red-800 border-red-200 text-[10px]">
+                                          Fuera de stock
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    <div className="text-xs text-gray-500 line-clamp-2 max-w-xs">{product.description}</div>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="py-3 px-4 whitespace-nowrap text-sm">
+                                <Badge variant="outline" className="text-xs capitalize bg-blue-100 text-blue-700 border-blue-200">
+                                  {product.category}
+                                </Badge>
+                              </td>
+                              <td className="py-3 px-4 whitespace-nowrap">
+                                <div className="text-sm font-bold text-blue-700">
+                                  <input
+                                    type="number"
+                                    value={product.price}
+                                    min={0}
+                                    className="w-20 px-2 py-1 border rounded text-blue-700 bg-blue-50"
+                                    onBlur={async e => {
+                                      const newPrice = Number(e.target.value);
+                                      const updated = products.map((p, i) => i === index ? { ...p, price: newPrice, updatedAt: new Date().toISOString() } : p);
+                                      setProducts(updated);
+                                      // Guardar en Firestore
+                                      const auth = getAuth();
+                                      const user = auth.currentUser;
+                                      if (!user) return;
+                                      const companyId = user.uid;
+                                      const productDoc = doc(db, "listados", companyId);
+                                      await updateDoc(productDoc, { 
+                                        products: updated, 
+                                        ubicacion: formData.ubicompleta,
+                                        companyName: formData.companyName,
+                                        updatedAt: new Date() 
+                                      });
+                                    }}
+                                    onChange={e => {
+                                      const newPrice = Number(e.target.value);
+                                      setProducts(products => products.map((p, i) => i === index ? { ...p, price: newPrice, updatedAt: new Date().toISOString() } : p));
+                                    }}
+                                  />
+                                </div>
+                                <div className="text-xs text-gray-500">por {product.unit}</div>
+                              </td>
+                              <td className="py-3 px-4 whitespace-nowrap">
+                                <div className="flex items-center space-x-2">
+                                  <div className="text-sm font-bold">
+                                    <input
+                                      type="number"
+                                      value={product.stock ?? 0}
+                                      min={0}
+                                      className={`w-20 px-2 py-1 border rounded ${
+                                        (product.stock === 0 || product.stock === null) 
+                                          ? "bg-red-50 text-red-700 border-red-300" 
+                                          : "bg-blue-50 text-blue-700 border-blue-200"
+                                      }`}
+                                      onBlur={async e => {
+                                        const newStock = Number(e.target.value);
+                                        const updated = products.map((p, i) => i === index ? { ...p, stock: newStock, updatedAt: new Date().toISOString() } : p);
+                                        setProducts(updated);
+                                        // Guardar en Firestore
+                                        const auth = getAuth();
+                                        const user = auth.currentUser;
+                                        if (!user) return;
+                                        const companyId = user.uid;
+                                        const productDoc = doc(db, "listados", companyId);
+                                        await updateDoc(productDoc, { 
+                                          products: updated, 
+                                          ubicacion: formData.ubicompleta,
+                                          companyName: formData.companyName,
+                                          updatedAt: new Date() 
+                                        });
+                                      }}
+                                      onChange={e => {
+                                        const newStock = Number(e.target.value);
+                                        setProducts(products => products.map((p, i) => i === index ? { ...p, stock: newStock, updatedAt: new Date().toISOString() } : p));
+                                      }}
+                                    />
+                                  </div>
+                                  {(product.stock === 0 || product.stock === null) && (
+                                    <Badge variant="outline" className="bg-red-100 text-red-800 border-red-200 text-xs">
+                                      Fuera de servicio
+                                    </Badge>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="py-3 px-4 whitespace-nowrap text-xs text-gray-500">
+                                {product.updatedAt
+                                  ? new Date(product.updatedAt).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })
+                                  : 'Sin modificar'}
+                              </td>
+                              <td className="py-3 px-4 whitespace-nowrap text-sm">
+                                <Button 
+                                  variant="ghost" 
+                                  size="sm"
+                                  onClick={() => handleDeleteProduct(product.id)}
+                                  className="text-red-500 hover:text-red-700 hover:bg-red-50 rounded-full"
+                                  aria-label="Eliminar"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
                 )}
               </CardContent>
             </Card>
@@ -1584,6 +1905,79 @@ const Profile = () => {
           </TabsContent>
         </Tabs>
       </div>
+      
+      {/* Dialog para mostrar el enlace de gestión de inventario */}
+      <Dialog open={Boolean(inventoryLink)} onOpenChange={(open) => !open && setInventoryLink(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-blue-700">
+              <Link className="h-5 w-5" />
+              Enlace para gestión de inventario
+            </DialogTitle>
+            <DialogDescription>
+              Comparte este enlace con quien necesite administrar tu inventario. Válido por 48 horas.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col space-y-4 py-4">
+            <div className="flex items-center gap-2 bg-blue-50 p-3 rounded-lg border border-blue-100">
+              <ShieldCheck className="h-5 w-5 text-green-600 flex-shrink-0" />
+              <p className="text-sm text-gray-700">
+                Este enlace permite actualizar precios y stock <strong>sin necesidad de iniciar sesión</strong>.
+                Compártelo solo con personas de confianza.
+              </p>
+            </div>
+            
+            <div className="flex items-center space-x-2">
+              <div className="grid flex-1 gap-2">
+                <Label htmlFor="link" className="sr-only">Enlace</Label>
+                <div className="flex items-center border rounded-md pl-3 pr-1 py-1 bg-gray-50">
+                  <input
+                    id="link"
+                    readOnly
+                    value={inventoryLink || ""}
+                    className="flex-1 border-0 bg-transparent py-1 text-sm outline-none placeholder:text-gray-500 focus:ring-0"
+                  />
+                  <Button 
+                    type="button" 
+                    size="sm" 
+                    className="h-8 px-2 bg-blue-600 hover:bg-blue-700 text-white"
+                    onClick={handleCopyLink}
+                  >
+                    <Copy className="h-4 w-4" />
+                    <span className="sr-only">Copiar</span>
+                  </Button>
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-center mt-4">
+              <Button 
+                type="button"
+                variant="outline" 
+                className="gap-2 border-green-200 text-green-700 hover:bg-green-50"
+                onClick={() => {
+                  if (inventoryLink) {
+                    window.open(inventoryLink, '_blank');
+                  }
+                }}
+              >
+                <ExternalLink className="h-4 w-4" />
+                Abrir en nueva ventana
+              </Button>
+              
+              <Button 
+                type="button"
+                variant="default"
+                className="gap-2"
+                onClick={() => setInventoryLink(null)}
+              >
+                <ShieldCheck className="h-4 w-4" />
+                Listo
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
