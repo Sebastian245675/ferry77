@@ -7,6 +7,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import {
   FileText,
   MessageSquare,
@@ -73,6 +77,11 @@ interface Quote {
   interestedDrivers?: any[]; // Lista de repartidores interesados
   amount?: number; // Para compatibilidad con totalAmount
   total?: number; // Otra forma de expresar el monto
+  bidEnabled?: boolean; // Flag para habilitar pujas de repartidores
+  fixedPrice?: number; // Precio fijo para la entrega cuando bidEnabled es false
+  lowestBid?: number; // Puja más baja recibida cuando bidEnabled es true
+  highestBid?: number; // Puja más alta recibida cuando bidEnabled es true
+  bids?: any[]; // Lista de pujas recibidas
   [key: string]: any; // Para capturar cualquier otro campo
 }
 
@@ -188,6 +197,7 @@ const DashboardEmpresas: React.FC = () => {
   const [completedQuotes, setCompletedQuotes] = useState<Quote[]>([]);
   const [completedJobs, setCompletedJobs] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false); // Estado para controlar los botones durante el procesamiento
+  const [showInterestedDrivers, setShowInterestedDrivers] = useState(false); // Estado para controlar la visualización de conductores interesados
 
   // Estadísticas para las tarjetas
   const stats = [
@@ -976,13 +986,177 @@ const DashboardEmpresas: React.FC = () => {
     }
   };
   
-  // Función para publicar un viaje para que los repartidores lo vean
-  const handlePublishDelivery = async (quoteId: string, deliveryId?: string) => {
+  // Estado para el modal de publicación
+  const [showPublishModal, setShowPublishModal] = useState(false);
+  const [selectedQuoteForPublish, setSelectedQuoteForPublish] = useState<string>("");
+  const [selectedDeliveryIdForPublish, setSelectedDeliveryIdForPublish] = useState<string>("");
+  const [isPriceFixed, setIsPriceFixed] = useState<boolean>(true);
+  const [fixedPrice, setFixedPrice] = useState<number>(0);
+  const [minBidPrice, setMinBidPrice] = useState<number>(0);
+
+  // Función para despublicar un viaje
+  const handleUnpublishDelivery = async (quoteId: string, deliveryId: string) => {
     if (isProcessing) return;
     
     try {
       setIsProcessing(true);
-      console.log(`[handlePublishDelivery] Publicando viaje para el pedido ${quoteId}...`);
+      console.log(`[handleUnpublishDelivery] Despublicando viaje para el pedido ${quoteId}...`);
+      
+      // Verificar que el usuario esté autenticado
+      const auth = getAuth();
+      const currentUser = auth.currentUser;
+      
+      if (!currentUser) {
+        throw new Error("Usuario no autenticado. Por favor, inicie sesión nuevamente.");
+      }
+      
+      // Verificar que tengamos un deliveryId
+      if (!deliveryId) {
+        throw new Error("No se tiene un ID de entrega para despublicar");
+      }
+      
+      // Actualizar el documento de entrega para marcarlo como no publicado
+      const deliveryRef = doc(db, "deliveries", deliveryId);
+      
+      // Primero verificamos si el documento existe
+      const deliverySnap = await getDoc(deliveryRef);
+      if (!deliverySnap.exists()) {
+        throw new Error(`No se encontró el documento de entrega con ID ${deliveryId}`);
+      }
+      
+      // Actualizamos el documento para que no sea visible para repartidores
+      await updateDoc(deliveryRef, {
+        isPublished: false,
+        published: false,
+        unpublishedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        visibility: "private",
+        availableForDrivers: false,
+        publicationStatus: "inactive",
+        searchable: false,
+        visibleInFeed: false
+      });
+      
+      console.log(`[handleUnpublishDelivery] ✅ Documento de entrega despublicado correctamente`);
+      
+      // Actualizar la solicitud original
+      const quoteRef = doc(db, "solicitud", quoteId);
+      const quoteSnap = await getDoc(quoteRef);
+      
+      if (quoteSnap.exists()) {
+        const quoteData = quoteSnap.data();
+        const existingComments = quoteData.comments || [];
+        
+        // Añadir un comentario para notificar que se ha despublicado el viaje
+        const newComment = {
+          id: Date.now().toString(),
+          text: "El viaje ha sido despublicado y ya no está disponible para los repartidores.",
+          userId: company.userId,
+          userName: "Sistema",
+          createdAt: new Date().toISOString(),
+          isSystem: true
+        };
+        
+        // Actualizamos la solicitud
+        await updateDoc(quoteRef, {
+          isPublished: false,
+          published: false,
+          deliveryPublished: false,
+          visibleToDrivers: false,
+          comments: [...existingComments, newComment]
+        });
+        
+        // Añadir un comentario al historial de la entrega
+        const commentData = {
+          text: "Viaje despublicado por la empresa",
+          createdAt: serverTimestamp(),
+          userId: company.userId || "sistema",
+          userName: company.name || "Sistema",
+          type: "system"
+        };
+
+        await addDoc(collection(db, "deliveries", deliveryId, "comments"), commentData);
+        
+        console.log(`[handleUnpublishDelivery] ✅ Viaje despublicado correctamente`);
+        
+        // Mostrar alerta de éxito
+        alert("Viaje despublicado exitosamente. Los repartidores ya no podrán verlo.");
+        
+        // Actualizar estado local inmediatamente para feedback visual
+        setRealQuotes(prevQuotes => {
+          const updated = prevQuotes.map(quote => 
+            quote.id === quoteId 
+              ? { 
+                  ...quote, 
+                  isPublished: false,
+                  published: false,
+                  deliveryPublished: false,
+                  comments: [...(quote.comments || []), newComment]
+                } 
+              : quote
+          );
+          return updated;
+        });
+        
+        // También actualizar los pedidos aceptados
+        setAcceptedQuotes(prevQuotes => {
+          return prevQuotes.map(quote => 
+            quote.id === quoteId 
+              ? { 
+                  ...quote, 
+                  isPublished: false,
+                  published: false,
+                  deliveryPublished: false
+                } 
+              : quote
+          );
+        });
+        
+        // Recargar datos para ver cambios
+        setTimeout(() => {
+          loadQuotes();
+        }, 1000);
+      } else {
+        throw new Error(`No se encontró la solicitud con ID ${quoteId}`);
+      }
+    } catch (error) {
+      console.error("Error al despublicar viaje:", error);
+      alert(`Error al despublicar viaje: ${error.message || "Inténtelo de nuevo."}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Función para iniciar el proceso de publicación con opciones
+  const startPublishProcess = (quoteId: string, deliveryId?: string) => {
+    setSelectedQuoteForPublish(quoteId);
+    setSelectedDeliveryIdForPublish(deliveryId || "");
+    
+    // Buscar el valor predeterminado para el precio fijo
+    const quote = [...realQuotes, ...acceptedQuotes].find(q => q.id === quoteId);
+    if (quote) {
+      const defaultPrice = Number(quote.totalAmount || quote.amount || quote.total || 0);
+      setFixedPrice(defaultPrice > 0 ? defaultPrice * 0.1 : 5000); // 10% del total o 5000 por defecto
+      setMinBidPrice(defaultPrice > 0 ? defaultPrice * 0.05 : 2500); // 5% del total o 2500 por defecto
+    } else {
+      setFixedPrice(5000);
+      setMinBidPrice(2500);
+    }
+    
+    setShowPublishModal(true);
+  };
+
+  // Función para publicar un viaje para que los repartidores lo vean
+  const handlePublishDelivery = async (quoteId: string, deliveryId?: string, options?: { 
+    bidEnabled?: boolean; 
+    fixedPrice?: number;
+    minBidPrice?: number;
+  }) => {
+    if (isProcessing) return;
+    
+    try {
+      setIsProcessing(true);
+      console.log(`[handlePublishDelivery] Publicando viaje para el pedido ${quoteId}...`, options);
       
       // Verificar que el usuario esté autenticado
       const auth = getAuth();
@@ -1047,6 +1221,20 @@ const DashboardEmpresas: React.FC = () => {
             availableForDrivers: true
           };
           
+          // Añadir opciones de puja o precio fijo
+          if (options) {
+            deliveryData.bidEnabled = !!options.bidEnabled;
+            
+            if (options.bidEnabled) {
+              deliveryData.minBidPrice = Number(options.minBidPrice) || 0;
+              deliveryData.bids = [];
+              deliveryData.bidEnabled = true;
+            } else {
+              deliveryData.fixedPrice = Number(options.fixedPrice) || 0;
+              deliveryData.bidEnabled = false;
+            }
+          }
+          
           // Solo añadir deliveryCoordinates si existe y no es undefined
           // Importante: Firestore no acepta valores undefined
           console.log("[handlePublishDelivery] Verificando coordenadas:", quoteData.deliveryCoordinates, quoteData.coordinates);
@@ -1058,36 +1246,51 @@ const DashboardEmpresas: React.FC = () => {
             deliveryData.deliveryCoordinates = quoteData.coordinates;
             console.log("[handlePublishDelivery] Usando coordinates alternativas");
           } else {
-          // Si no hay coordenadas válidas, usar valor nulo en lugar de undefined
-          console.log("[handlePublishDelivery] No se encontraron coordenadas válidas para la entrega, usando null");
-          deliveryData.deliveryCoordinates = null;
-        }
+            // Si no hay coordenadas válidas, usar valor nulo en lugar de undefined
+            console.log("[handlePublishDelivery] No se encontraron coordenadas válidas para la entrega, usando null");
+            deliveryData.deliveryCoordinates = null;
+          }
         
-        // Asegurar que la entrega sea visible para los repartidores
-        deliveryData.availableForDrivers = true;
-        deliveryData.visibility = "public";
-        deliveryData.isPublished = true;
-        deliveryData.published = true;
-        deliveryData.publicationStatus = "active";
-        deliveryData.driverStatus = "available";
-        deliveryData.searchable = true;
-        deliveryData.visibleInFeed = true;
-        deliveryData.region = "all";
-        
-        console.log(`[handlePublishDelivery] Datos de entrega a crear:`, deliveryData);          try {
+          // Asegurar que la entrega sea visible para los repartidores
+          deliveryData.availableForDrivers = true;
+          deliveryData.visibility = "public";
+          deliveryData.isPublished = true;
+          deliveryData.published = true;
+          deliveryData.publicationStatus = "active";
+          deliveryData.driverStatus = "available";
+          deliveryData.searchable = true;
+          deliveryData.visibleInFeed = true;
+          deliveryData.region = "all";
+          
+          console.log(`[handlePublishDelivery] Datos de entrega a crear:`, deliveryData);          
+          try {
             // Guardar en la colección de deliveries
             const newDeliveryRef = await addDoc(collection(db, "deliveries"), deliveryData);
             console.log(`[handlePublishDelivery] ✅ Entrega creada con ID: ${newDeliveryRef.id}`);
             
             // Actualizar la solicitud con el ID de entrega y otros campos necesarios
-            await updateDoc(quoteRef, {
+            const updateData: any = {
               deliveryId: newDeliveryRef.id,
               status: "confirmado",
               deliveryStatus: "pendingDriver",
               isPublished: true,
               published: true,
               deliveryPublished: true
-            });
+            };
+            
+            // Añadir las opciones de publicación a la solicitud también
+            if (options) {
+              updateData.bidEnabled = !!options.bidEnabled;
+              
+              if (options.bidEnabled) {
+                updateData.minBidPrice = Number(options.minBidPrice) || 0;
+                updateData.bids = [];
+              } else {
+                updateData.fixedPrice = Number(options.fixedPrice) || 0;
+              }
+            }
+            
+            await updateDoc(quoteRef, updateData);
             
             // Usar el nuevo ID para continuar
             deliveryId = newDeliveryRef.id;
@@ -1118,8 +1321,8 @@ const DashboardEmpresas: React.FC = () => {
           throw new Error(`No se encontró el documento de entrega con ID ${deliveryId}`);
         }
         
-        // Actualizamos el documento con todos los campos necesarios para garantizar visibilidad
-        await updateDoc(deliveryRef, {
+        // Preparar los datos de actualización
+        const updateData: any = {
           isPublished: true,
           published: true,
           publishedAt: serverTimestamp(),
@@ -1136,7 +1339,25 @@ const DashboardEmpresas: React.FC = () => {
           region: "all",
           // Flag para indicar que está listo para ser asignado
           readyForAssignment: true
-        });
+        };
+        
+        // Añadir las opciones de puja o precio fijo si se proporcionan
+        if (options) {
+          updateData.bidEnabled = !!options.bidEnabled;
+          
+          if (options.bidEnabled) {
+            updateData.minBidPrice = Number(options.minBidPrice) || 0;
+            // Si no existe bids, lo inicializamos
+            if (!deliverySnap.data().bids) {
+              updateData.bids = [];
+            }
+          } else {
+            updateData.fixedPrice = Number(options.fixedPrice) || 0;
+          }
+        }
+        
+        // Actualizamos el documento con todos los campos necesarios
+        await updateDoc(deliveryRef, updateData);
         
         console.log(`[handlePublishDelivery] ✅ Documento de entrega actualizado correctamente`);
       } catch (updateError) {
@@ -1153,17 +1374,27 @@ const DashboardEmpresas: React.FC = () => {
         const existingComments = quoteData.comments || [];
         
         // Añadir un comentario para notificar que se ha publicado el viaje
+        let commentText = "El viaje ha sido publicado para todos los repartidores disponibles. ";
+        
+        if (options && options.bidEnabled) {
+          commentText += `Los repartidores pueden enviar sus ofertas (precio mínimo: $${options.minBidPrice}).`;
+        } else if (options && options.fixedPrice) {
+          commentText += `El precio fijado para la entrega es de $${options.fixedPrice}.`;
+        } else {
+          commentText += "Se le notificará cuando un repartidor acepte el pedido.";
+        }
+        
         const newComment = {
           id: Date.now().toString(),
-          text: "El viaje ha sido publicado para todos los repartidores disponibles. Se le notificará cuando un repartidor acepte el pedido.",
+          text: commentText,
           userId: company.userId,
           userName: "Sistema",
           createdAt: new Date().toISOString(),
           isSystem: true
         };
         
-        // Actualizamos la solicitud con todos los campos necesarios
-        await updateDoc(quoteRef, {
+        // Preparar los datos de actualización
+        const updateData: any = {
           deliveryStatus: "pendingDriver",
           status: "pendingDriver", // Aseguramos que ambos campos estén actualizados
           isPublished: true,
@@ -1172,11 +1403,36 @@ const DashboardEmpresas: React.FC = () => {
           driverAssignmentStatus: "pending", // Estado para asignación de repartidor
           visibleToDrivers: true, // Visibilidad explícita para repartidores
           comments: [...existingComments, newComment]
-        });
+        };
+        
+        // Añadir las opciones de puja o precio fijo si se proporcionan
+        if (options) {
+          updateData.bidEnabled = !!options.bidEnabled;
+          
+          if (options.bidEnabled) {
+            updateData.minBidPrice = Number(options.minBidPrice) || 0;
+            // Si no existe bids, lo inicializamos
+            if (!quoteData.bids) {
+              updateData.bids = [];
+            }
+          } else {
+            updateData.fixedPrice = Number(options.fixedPrice) || 0;
+          }
+        }
+        
+        // Actualizamos la solicitud con todos los campos necesarios
+        await updateDoc(quoteRef, updateData);
         
         // Añadir un comentario al historial de la entrega
+        let commentDeliveryText = "Viaje publicado para repartidores disponibles";
+        if (options && options.bidEnabled) {
+          commentDeliveryText += ` con sistema de pujas (mínimo: $${options.minBidPrice})`;
+        } else if (options && options.fixedPrice) {
+          commentDeliveryText += ` con precio fijo de $${options.fixedPrice}`;
+        }
+        
         const commentData = {
-          text: "Viaje publicado para repartidores disponibles",
+          text: commentDeliveryText,
           createdAt: serverTimestamp(),
           userId: company.userId || "sistema",
           userName: company.name || "Sistema",
@@ -1188,7 +1444,13 @@ const DashboardEmpresas: React.FC = () => {
         console.log(`[handlePublishDelivery] ✅ Viaje publicado correctamente con ID: ${deliveryId}`);
         
         // Mostrar alerta de éxito
-        alert("¡Viaje publicado exitosamente! Los repartidores cercanos podrán verlo y aceptarlo.");
+        if (options && options.bidEnabled) {
+          alert(`¡Viaje publicado exitosamente! Los repartidores podrán enviar sus ofertas (precio mínimo: $${options.minBidPrice}).`);
+        } else if (options && options.fixedPrice) {
+          alert(`¡Viaje publicado exitosamente! El precio fijo para la entrega es de $${options.fixedPrice}.`);
+        } else {
+          alert("¡Viaje publicado exitosamente! Los repartidores cercanos podrán verlo y aceptarlo.");
+        }
         
         // Actualizar estado local inmediatamente para feedback visual
         setRealQuotes(prevQuotes => {
@@ -1199,6 +1461,9 @@ const DashboardEmpresas: React.FC = () => {
                   isPublished: true,
                   published: true,
                   deliveryPublished: true,
+                  bidEnabled: options?.bidEnabled,
+                  fixedPrice: options?.fixedPrice,
+                  minBidPrice: options?.minBidPrice,
                   comments: [...(quote.comments || []), newComment]
                 } 
               : quote
@@ -1214,19 +1479,22 @@ const DashboardEmpresas: React.FC = () => {
                   ...quote, 
                   isPublished: true,
                   published: true,
-                  deliveryPublished: true
+                  deliveryPublished: true,
+                  bidEnabled: options?.bidEnabled,
+                  fixedPrice: options?.fixedPrice,
+                  minBidPrice: options?.minBidPrice
                 } 
               : quote
           );
         });
         
+        // Ocultar el modal si estaba abierto
+        setShowPublishModal(false);
+        
         // Recargar datos para ver cambios
         setTimeout(() => {
           // Recargar las solicitudes para actualizar UI
           loadQuotes();
-          
-          // Recargar completamente la página para refrescar todo el estado
-          window.location.reload();
         }, 1000);
       } else {
         throw new Error(`No se encontró la solicitud con ID ${quoteId}`);
@@ -1237,9 +1505,7 @@ const DashboardEmpresas: React.FC = () => {
     } finally {
       setIsProcessing(false);
     }
-  };
-  
-  // Función para denegar una solicitud
+  };  // Función para denegar una solicitud
   const handleDenyQuote = async (quoteId: string) => {
     if (isProcessing) return;
     
@@ -1547,7 +1813,7 @@ const DashboardEmpresas: React.FC = () => {
                         </div>
                       </div>
                       
-                      {/* Mostrar botón de publicar si el pedido tiene deliveryId y no está publicado */}
+                      {/* Mostrar botón de publicar si el pedido tiene deliveryId y no está publicado - BOTÓN PRINCIPAL */}
                       {quote.deliveryId && !quote.driverId && (!quote.isPublished && !quote.published) && (
                         <div className="mt-3 mb-2 bg-amber-50 p-3 rounded-lg border border-amber-100 relative animate-pulse">
                           <div className="absolute -top-2 -right-2">
@@ -1561,23 +1827,7 @@ const DashboardEmpresas: React.FC = () => {
                               Esperando Repartidor
                             </h4>
                           </div>
-                          <div>
-                            <p className="text-xs text-amber-700 mb-3">
-                              <strong>¡Importante!</strong> Este pedido necesita ser publicado para que los repartidores puedan verlo. Haz clic en el botón para hacerlo visible.
-                            </p>
-                            <Button
-                              size="sm"
-                              className="bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white text-xs px-4 py-2 h-auto rounded-lg shadow-md hover:shadow-lg w-full flex items-center justify-center border-2 border-purple-400"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handlePublishDelivery(quote.id, quote.deliveryId);
-                              }}
-                              disabled={isProcessing}
-                            >
-                              <TruckIcon className="h-3.5 w-3.5 mr-2" />
-                              Publicar Viaje
-                            </Button>
-                          </div>
+                          {/* Botón de publicar eliminado */}
                         </div>
                       )}
                     
@@ -1727,41 +1977,19 @@ const DashboardEmpresas: React.FC = () => {
                                 ))}
                               </div>
                               
-                              {/* Mostrar botón de publicar incluso si hay repartidores interesados pero el pedido no está publicado */}
-                              {!quote.isPublished && !quote.published && (
-                                <div className="mt-3">
-                                  <Button
-                                    size="sm"
-                                    className="bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white text-xs px-4 py-2 h-auto rounded-lg shadow-sm w-full flex items-center justify-center"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handlePublishDelivery(quote.id, quote.deliveryId);
-                                    }}
-                                    disabled={isProcessing}
-                                  >
-                                    <TruckIcon className="h-3.5 w-3.5 mr-2" />
-                                    Publicar Viaje
-                                  </Button>
-                                </div>
-                              )}
+                              {/* Botón eliminado */}
                             </div>
                           ) : (
                             <div>
                               <p className="text-xs text-amber-700 mb-3">
                                 Aún no hay repartidores interesados en este pedido. Puedes publicar el viaje para que sea visible para todos los repartidores disponibles.
                               </p>
-                              <Button
-                                size="sm"
-                                className="bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white text-xs px-4 py-2 h-auto rounded-lg shadow-sm w-full flex items-center justify-center"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handlePublishDelivery(quote.id, quote.deliveryId);
-                                }}
-                                disabled={isProcessing || quote.isPublished || quote.published}
-                              >
-                                <TruckIcon className="h-3.5 w-3.5 mr-2" />
-                                {(quote.isPublished || quote.published) ? "Viaje ya publicado" : "Publicar Viaje"}
-                              </Button>
+                              {/* Botón borrado */}
+                              {(quote.isPublished || quote.published) && (
+                                <p className="text-xs text-green-700 font-medium">
+                                  Este viaje ya ha sido publicado y está visible para los repartidores.
+                                </p>
+                              )}
                             </div>
                           )}
                         </div>
@@ -1798,287 +2026,15 @@ const DashboardEmpresas: React.FC = () => {
                           <Button
                             size="sm"
                             className="bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white text-xs px-3 py-1 sm:px-3 sm:py-1.5 h-auto rounded-lg shadow-md border-2 border-purple-400 w-full sm:w-auto flex items-center justify-center animate-pulse"
-                            onClick={async (e) => {
+                            onClick={(e) => {
                               e.stopPropagation();
                               if (isProcessing) {
                                 alert("Hay un proceso en curso. Por favor espere.");
                                 return;
                               }
                               
-                              setIsProcessing(true);
-                              try {
-                                console.log(`[Publicar Viaje] Iniciando proceso para pedido ${quote.id}`);
-                                
-                                // Si ya está publicado, no hacemos nada
-                                if (quote.isPublished || quote.published) {
-                                  alert("Este viaje ya está publicado para repartidores.");
-                                  setIsProcessing(false);
-                                  return;
-                                }
-                                
-                                // CASO 1: No tiene deliveryId, lo creamos
-                                if (!quote.deliveryId) {
-                                  console.log(`[Publicar Viaje] Pedido ${quote.id} sin deliveryId, se creará uno nuevo`);
-                                  alert("Este pedido no tiene ID de entrega. Se creará uno automáticamente y se publicará.");
-                                  
-                                  // Obtener datos del pedido
-                                  const quoteRef = doc(db, "solicitud", quote.id);
-                                  const quoteSnap = await getDoc(quoteRef);
-                                  
-                                  if (!quoteSnap.exists()) {
-                                    throw new Error("La solicitud no existe");
-                                  }
-                                  
-                                  const quoteData = quoteSnap.data();
-                                  const auth = getAuth();
-                                  const user = auth.currentUser;
-                                  
-                                  if (!user) {
-                                    throw new Error("Usuario no autenticado");
-                                  }
-                                  
-                                  // Crear registro en la colección de entregas con datos válidos para Firestore
-                                  const deliveryData: any = {
-                                    orderId: quote.id,
-                                    companyId: user.uid,
-                                    companyName: company.name || "Empresa",
-                                    userId: quoteData.userId || quoteData.clientId || "Cliente",
-                                    clientName: quoteData.clientName || quoteData.userName || quoteData.userId || "Cliente",
-                                    items: quoteData.products || quoteData.items || [],
-                                    totalAmount: Number(quoteData.totalAmount || quoteData.amount || quoteData.total || 0),
-                                    status: "pendingDriver" as DeliveryStatus,
-                                    createdAt: serverTimestamp(),
-                                    updatedAt: serverTimestamp(),
-                                    deliveryAddress: quoteData.deliveryAddress || quoteData.address || "",
-                                    deliveryFee: Number(quoteData.deliveryFee || 0),
-                                    interestedDrivers: [], // Lista vacía de repartidores interesados
-                                    isPublished: true, // Ya lo marcamos como publicado desde el inicio
-                                    published: true,
-                                    publicationStatus: "active",
-                                    visibility: "public",
-                                    availableForDrivers: true
-                                  };
-                                  
-                                  // Solo añadir deliveryCoordinates si existe y no es undefined
-                                  // Importante: Firestore no acepta valores undefined
-                                  console.log("[Publicar Viaje] Verificando coordenadas:", quoteData.deliveryCoordinates, quoteData.coordinates);
-                                  
-                                  if (quoteData.deliveryCoordinates && typeof quoteData.deliveryCoordinates === 'object') {
-                                    deliveryData.deliveryCoordinates = quoteData.deliveryCoordinates;
-                                    console.log("[Publicar Viaje] Usando deliveryCoordinates existentes");
-                                  } else if (quoteData.coordinates && typeof quoteData.coordinates === 'object') {
-                                    deliveryData.deliveryCoordinates = quoteData.coordinates;
-                                    console.log("[Publicar Viaje] Usando coordinates alternativas");
-                                  } else {
-                                    // Si no hay coordenadas válidas, usar valor nulo en lugar de undefined
-                                    console.log("[Publicar Viaje] No se encontraron coordenadas válidas para la entrega, usando null");
-                                    deliveryData.deliveryCoordinates = null;
-                                  }
-                                  
-                                  try {
-                                    // Guardar en la colección de deliveries
-                                    // Asegurar que todos los campos necesarios para la visibilidad estén definidos
-                                    deliveryData.availableForDrivers = true;
-                                    deliveryData.visibility = "public";
-                                    deliveryData.isPublished = true;
-                                    deliveryData.published = true;
-                                    deliveryData.publicationStatus = "active";
-                                    deliveryData.driverStatus = "available";
-                                    deliveryData.searchable = true;
-                                    deliveryData.visibleInFeed = true;
-                                    deliveryData.region = "all";
-                                    deliveryData.readyForAssignment = true;
-                                    
-                                    console.log(`[Publicar Viaje] Datos de entrega a enviar:`, JSON.stringify(deliveryData));
-                                    console.log(`[Publicar Viaje] Creando nuevo registro de entrega...`);
-                                    
-                                    // Verificamos que no haya campos undefined antes de enviar
-                                    Object.keys(deliveryData).forEach(key => {
-                                      if (deliveryData[key] === undefined) {
-                                        console.log(`[Publicar Viaje] ⚠️ Campo ${key} es undefined, reemplazando con null`);
-                                        deliveryData[key] = null;
-                                      }
-                                    });
-                                    
-                                    const newDeliveryRef = await addDoc(collection(db, "deliveries"), deliveryData);
-                                    const deliveryId = newDeliveryRef.id;
-                                    console.log(`[Publicar Viaje] ✅ Entrega creada con ID: ${deliveryId}`);
-                                    
-                                    // Actualizar la solicitud con los campos necesarios
-                                    await updateDoc(quoteRef, {
-                                      deliveryId: deliveryId,
-                                      status: "confirmado",
-                                      deliveryStatus: "pendingDriver",
-                                      isPublished: true,
-                                      published: true,
-                                      deliveryPublished: true,
-                                      publishedAt: serverTimestamp()
-                                    });
-                                    console.log(`[Publicar Viaje] ✅ Solicitud actualizada con deliveryId`);
-                                    
-                                    // Añadir un comentario para notificar al cliente
-                                    const newComment = {
-                                      id: Date.now().toString(),
-                                      text: "El viaje ha sido publicado para todos los repartidores disponibles. Se le notificará cuando un repartidor acepte el pedido.",
-                                      userId: company.userId,
-                                      userName: "Sistema",
-                                      createdAt: new Date().toISOString(),
-                                      isSystem: true
-                                    };
-                                    
-                                    // Obtener los comentarios existentes o inicializar un array vacío
-                                    const existingComments = quoteData.comments || [];
-                                    
-                                    // Añadir el nuevo comentario
-                                    await updateDoc(quoteRef, {
-                                      comments: [...existingComments, newComment]
-                                    });
-                                    
-                                    // Actualizar estado local para feedback inmediato
-                                    setRealQuotes(prevQuotes => {
-                                      const updated = prevQuotes.map(q => 
-                                        q.id === quote.id 
-                                          ? { 
-                                              ...q, 
-                                              deliveryId: deliveryId,
-                                              isPublished: true,
-                                              published: true,
-                                              deliveryPublished: true,
-                                              deliveryStatus: "pendingDriver",
-                                              status: "confirmado",
-                                              comments: [...(q.comments || []), newComment]
-                                            } 
-                                          : q
-                                      );
-                                      return updated;
-                                    });
-                                    
-                                    setAcceptedQuotes(prevQuotes => {
-                                      const updated = prevQuotes.map(q => 
-                                        q.id === quote.id 
-                                          ? { 
-                                              ...q, 
-                                              deliveryId: deliveryId,
-                                              isPublished: true,
-                                              published: true,
-                                              deliveryPublished: true,
-                                              deliveryStatus: "pendingDriver",
-                                              status: "confirmado"
-                                            } 
-                                          : q
-                                      );
-                                      return updated;
-                                    });
-                                    
-                                    alert("¡Viaje publicado exitosamente! Los repartidores cercanos podrán verlo y aceptarlo.");
-                                    
-                                    // Recargar datos para ver cambios
-                                    setTimeout(() => {
-                                      loadQuotes();
-                                    }, 1000);
-                                  } catch (createError) {
-                                    console.error("[Publicar Viaje] Error al crear el documento de entrega:", createError);
-                                    alert(`Error al crear el documento de entrega: ${createError.message}`);
-                                  }
-                                } 
-                                // CASO 2: Ya tiene deliveryId, solo publicamos
-                                else {
-                                  console.log(`[Publicar Viaje] Pedido ${quote.id} con deliveryId ${quote.deliveryId}, actualizando...`);
-                                  
-                                  // Actualizar el documento de entrega para marcarlo como publicado
-                                  const deliveryRef = doc(db, "deliveries", quote.deliveryId);
-                                  
-                                  // Primero verificamos si el documento existe
-                                  const deliverySnap = await getDoc(deliveryRef);
-                                  if (!deliverySnap.exists()) {
-                                    throw new Error(`No se encontró el documento de entrega con ID ${quote.deliveryId}`);
-                                  }
-                                  
-                                  // Actualizamos el documento con todos los campos necesarios
-                                  await updateDoc(deliveryRef, {
-                                    isPublished: true,
-                                    published: true,
-                                    publishedAt: serverTimestamp(),
-                                    updatedAt: serverTimestamp(),
-                                    visibility: "public",
-                                    status: "pendingDriver",
-                                    availableForDrivers: true,
-                                    publicationStatus: "active"
-                                  });
-                                  console.log(`[Publicar Viaje] ✅ Documento de entrega actualizado`);
-                                  
-                                  // Actualizar la solicitud original
-                                  const quoteRef = doc(db, "solicitud", quote.id);
-                                  const quoteSnap = await getDoc(quoteRef);
-                                  
-                                  if (quoteSnap.exists()) {
-                                    const quoteData = quoteSnap.data();
-                                    const existingComments = quoteData.comments || [];
-                                    
-                                    // Añadir un comentario para notificar que se ha publicado el viaje
-                                    const newComment = {
-                                      id: Date.now().toString(),
-                                      text: "El viaje ha sido publicado para todos los repartidores disponibles. Se le notificará cuando un repartidor acepte el pedido.",
-                                      userId: company.userId,
-                                      userName: "Sistema",
-                                      createdAt: new Date().toISOString(),
-                                      isSystem: true
-                                    };
-                                    
-                                    // Actualizamos la solicitud con todos los campos necesarios
-                                    await updateDoc(quoteRef, {
-                                      deliveryStatus: "pendingDriver",
-                                      status: "pendingDriver", 
-                                      isPublished: true,
-                                      published: true,
-                                      deliveryPublished: true,
-                                      comments: [...existingComments, newComment]
-                                    });
-                                    
-                                    // Actualizar estado local inmediatamente para feedback visual
-                                    setRealQuotes(prevQuotes => {
-                                      const updated = prevQuotes.map(q => 
-                                        q.id === quote.id 
-                                          ? { 
-                                              ...q, 
-                                              isPublished: true,
-                                              published: true,
-                                              deliveryPublished: true,
-                                              comments: [...(q.comments || []), newComment]
-                                            } 
-                                          : q
-                                      );
-                                      return updated;
-                                    });
-                                    
-                                    // También actualizar los pedidos aceptados si el pedido está ahí
-                                    setAcceptedQuotes(prevQuotes => {
-                                      return prevQuotes.map(q => 
-                                        q.id === quote.id 
-                                          ? { 
-                                              ...q, 
-                                              isPublished: true,
-                                              published: true,
-                                              deliveryPublished: true
-                                            } 
-                                          : q
-                                      );
-                                    });
-                                    
-                                    alert("¡Viaje publicado exitosamente! Los repartidores cercanos podrán verlo y aceptarlo.");
-                                    
-                                    // Recargar datos para ver cambios
-                                    setTimeout(() => {
-                                      loadQuotes();
-                                    }, 1000);
-                                  }
-                                }
-                              } catch (error: any) {
-                                console.error("[Publicar Viaje] Error:", error);
-                                alert(`Error al publicar viaje: ${error.message || "Por favor, inténtalo de nuevo."}`);
-                              } finally {
-                                setIsProcessing(false);
-                              }
+                              // Iniciar el proceso de publicación con opciones
+                              startPublishProcess(quote.id, quote.deliveryId);
                             }}
                             disabled={isProcessing || (quote.isPublished || quote.published)}
                           >
@@ -2087,45 +2043,33 @@ const DashboardEmpresas: React.FC = () => {
                           </Button>
                         )}
                         {/* Botón para publicar viaje */}
-                        {quote.deliveryId && !quote.isPublished && !quote.published && !quote.driverId && (
-                          <Button
-                            size="sm"
-                            className="bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white text-xs px-3 py-1 sm:px-3 sm:py-1.5 h-auto rounded-lg shadow-sm w-full sm:w-auto flex items-center justify-center"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handlePublishDelivery(quote.id, quote.deliveryId);
-                            }}
-                            disabled={isProcessing}
-                          >
-                            <TruckIcon className="w-3 h-3 mr-1" />
-                            Publicar Viaje
-                          </Button>
-                        )}
+                        {/* Botón eliminado */}
                         {/* Indicador de viaje publicado */}
                         {quote.deliveryId && (quote.isPublished || quote.published) && !quote.driverId && (
-                          <Badge className="bg-purple-100 text-purple-800 text-xs h-auto sm:self-center px-2 py-1 flex items-center">
-                            ✓ Viaje publicado
-                          </Badge>
+                          <div className="flex items-center gap-2">
+                            <Badge className="bg-purple-100 text-purple-800 text-xs h-auto sm:self-center px-2 py-1 flex items-center">
+                              ✓ Viaje publicado
+                            </Badge>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="bg-red-50 border-red-200 text-red-600 hover:bg-red-100 text-xs px-2 py-1 sm:px-3 sm:py-1 h-auto rounded-lg"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (window.confirm("¿Estás seguro de que deseas despublicar este viaje? Los repartidores ya no podrán verlo.")) {
+                                  handleUnpublishDelivery(quote.id, quote.deliveryId!);
+                                }
+                              }}
+                              disabled={isProcessing}
+                            >
+                              <X className="w-3 h-3 mr-1" />
+                              Despublicar
+                            </Button>
+                          </div>
                         )}
                       </div>
                       
-                      {/* Alerta flotante para publicar viaje */}
-                      {quote.deliveryId && !quote.driverId && (!quote.isPublished && !quote.published) && (
-                        <div className="fixed bottom-4 right-4 z-50 animate-bounce bg-purple-700 text-white px-4 py-2 rounded-lg shadow-xl">
-                          <p className="text-sm font-bold">¡Atención! Pedido sin publicar</p>
-                          <Button
-                            size="sm"
-                            className="bg-white text-purple-800 mt-2 w-full"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handlePublishDelivery(quote.id, quote.deliveryId);
-                            }}
-                          >
-                            <TruckIcon className="w-3 h-3 mr-1" />
-                            Publicar ahora
-                          </Button>
-                        </div>
-                      )}
+                      {/* Eliminamos el botón flotante para evitar duplicidad */}
                     </div>
                   </div>
                 ))}
@@ -2372,9 +2316,8 @@ const DashboardEmpresas: React.FC = () => {
                 {(showAllPendingQuotes ? pendingQuotes : pendingQuotes.slice(0, 5)).map((quote) => (
                   <div
                     key={quote.id}
-                    className="p-3 hover:bg-blue-50/50 transition-colors cursor-pointer relative group shadow-sm hover:shadow-md border border-transparent hover:border-blue-200 rounded-md"
-                    onClick={() => navigate(`/backoffice/order-tracking?id=${quote.id}`)}
-                    title="Click para ver detalles de la solicitud"
+                    className="p-3 hover:bg-blue-50/50 transition-colors relative group shadow-sm hover:shadow-md border border-transparent hover:border-blue-200 rounded-md"
+                    title="Solicitud de cliente"
                   >
                     <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
                       <Info className="h-4 w-4 text-blue-600" />
@@ -2534,8 +2477,25 @@ const DashboardEmpresas: React.FC = () => {
                         <Button
                           size="sm"
                           variant="outline"
-                          className="bg-white border-gray-200 text-red-600 hover:bg-red-50 hover:text-red-700 hover:border-red-200 text-xs font-medium px-3 py-2 h-auto rounded-lg w-full sm:w-auto flex items-center justify-center transition-all duration-200"
-                          onClick={() => handleDenyQuote(quote.id)}
+                          className="bg-white border-blue-200 text-blue-600 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 text-xs font-medium px-3 py-2 h-auto rounded-lg flex-1 sm:flex-none flex items-center justify-center transition-all duration-200"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            navigate(`/backoffice/order-tracking?id=${quote.id}`);
+                          }}
+                        >
+                          <Info className="h-3.5 w-3.5 mr-1.5" />
+                          Ver detalles
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="bg-white border-gray-200 text-red-600 hover:bg-red-50 hover:text-red-700 hover:border-red-200 text-xs font-medium px-3 py-2 h-auto rounded-lg flex-1 sm:flex-none flex items-center justify-center transition-all duration-200"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleDenyQuote(quote.id);
+                          }}
                           disabled={isProcessing}
                         >
                           <X className="h-3.5 w-3.5 mr-1.5" />
@@ -2543,8 +2503,12 @@ const DashboardEmpresas: React.FC = () => {
                         </Button>
                         <Button
                           size="sm"
-                          className="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white text-xs font-medium px-4 py-2 h-auto rounded-lg shadow-md hover:shadow-lg w-full sm:w-auto flex items-center justify-center transition-all duration-200 border-none relative overflow-hidden group"
-                          onClick={() => handleConfirmQuote(quote.id)}
+                          className="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white text-xs font-medium px-4 py-2 h-auto rounded-lg shadow-md hover:shadow-lg flex-1 sm:flex-none flex items-center justify-center transition-all duration-200 border-none relative overflow-hidden group"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleConfirmQuote(quote.id);
+                          }}
                           disabled={isProcessing}
                         >
                           <span className="absolute inset-0 w-full h-full bg-gradient-to-r from-green-400 to-green-500 opacity-0 group-hover:opacity-10 transition-opacity duration-300"></span>
@@ -2571,6 +2535,112 @@ const DashboardEmpresas: React.FC = () => {
         </Card>
       </div>
       
+      {/* Modal para publicar viaje con opciones */}
+      <Dialog open={showPublishModal} onOpenChange={setShowPublishModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-center text-xl font-semibold">Publicar Viaje para Repartidores</DialogTitle>
+            <DialogDescription className="text-center">
+              Elige cómo quieres manejar el pago para este viaje
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="py-4 space-y-6">
+            <RadioGroup 
+              value={isPriceFixed ? "fixedPrice" : "bidEnabled"}
+              onValueChange={(value) => setIsPriceFixed(value === "fixedPrice")}
+              className="space-y-4"
+            >
+              <div className="flex items-start space-x-2 border p-4 rounded-lg hover:border-blue-200 hover:bg-blue-50">
+                <RadioGroupItem value="fixedPrice" id="fixedPrice" />
+                <div className="grid gap-1.5">
+                  <Label htmlFor="fixedPrice" className="font-medium">
+                    Definir precio fijo
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    Establece un precio fijo para la entrega. El repartidor solo podrá aceptar o rechazar.
+                  </p>
+                  {isPriceFixed && (
+                    <div className="mt-2">
+                      <Label htmlFor="price" className="text-sm mb-1 block">
+                        Precio para el repartidor ($)
+                      </Label>
+                      <Input
+                        id="price"
+                        type="number"
+                        placeholder="Ejemplo: 5000"
+                        value={fixedPrice}
+                        onChange={(e) => setFixedPrice(Number(e.target.value))}
+                        className="w-full"
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+              
+              <div className="flex items-start space-x-2 border p-4 rounded-lg hover:border-blue-200 hover:bg-blue-50">
+                <RadioGroupItem value="bidEnabled" id="bidEnabled" />
+                <div className="grid gap-1.5">
+                  <Label htmlFor="bidEnabled" className="font-medium">
+                    Recibir ofertas de repartidores
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    Los repartidores podrán enviar su oferta (precio) por el que están dispuestos a realizar la entrega.
+                  </p>
+                  {!isPriceFixed && (
+                    <div className="mt-2">
+                      <Label htmlFor="minBidPrice" className="text-sm mb-1 block">
+                        Precio mínimo para ofertas ($)
+                      </Label>
+                      <Input
+                        id="minBidPrice"
+                        type="number"
+                        placeholder="Ejemplo: 2500"
+                        value={minBidPrice}
+                        onChange={(e) => setMinBidPrice(Number(e.target.value))}
+                        className="w-full"
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            </RadioGroup>
+          </div>
+          
+          <DialogFooter className="sm:justify-between">
+            <Button
+              variant="outline"
+              onClick={() => setShowPublishModal(false)}
+              disabled={isProcessing}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => {
+                if (isPriceFixed && (!fixedPrice || fixedPrice <= 0)) {
+                  alert("Por favor, ingresa un precio fijo válido mayor a cero.");
+                  return;
+                }
+                
+                if (!isPriceFixed && (!minBidPrice || minBidPrice <= 0)) {
+                  alert("Por favor, ingresa un precio mínimo válido mayor a cero.");
+                  return;
+                }
+                
+                const options = isPriceFixed 
+                  ? { bidEnabled: false, fixedPrice: fixedPrice } 
+                  : { bidEnabled: true, minBidPrice: minBidPrice };
+                
+                handlePublishDelivery(selectedQuoteForPublish, selectedDeliveryIdForPublish, options);
+              }}
+              disabled={isProcessing}
+              className="bg-green-600 hover:bg-green-700 text-white"
+            >
+              {isProcessing ? "Publicando..." : "Publicar Viaje"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 };
