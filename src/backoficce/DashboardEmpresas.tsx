@@ -289,10 +289,10 @@ const DashboardEmpresas: React.FC = () => {
 
       console.log("Cargando solicitudes para el usuario:", user.uid, user.displayName);
 
-      // Obtener TODAS las solicitudes, excluyendo las que están marcadas como entregadas
+      // Obtener SOLO las solicitudes pendientes (no confirmadas, no denegadas, no entregadas)
       const q = query(
         collection(db, "solicitud"),
-        where("status", "not-in", ["entregado"])
+        where("status", "not-in", ["confirmado", "denegado", "entregado"])
       );
       const querySnapshot = await getDocs(q);
       const allQuotes = querySnapshot.docs.map((doc) => ({
@@ -403,6 +403,11 @@ const DashboardEmpresas: React.FC = () => {
       // Filtrar para mostrar solo las solicitudes donde esta empresa esté seleccionada
       // y que NO estén confirmadas ni denegadas (solo las pendientes)
       const filteredPendingQuotes = quotesWithDriverInfo.filter(quote => {
+        // Si ya está confirmada o denegada, no es una solicitud pendiente
+        if (quote.status === "confirmado" || quote.status === "denegado") {
+          return false;
+        }
+        
         // Si no hay empresas seleccionadas, verificar otros campos para backward compatibility
         if (!quote.selectedCompanies || !Array.isArray(quote.selectedCompanies) || quote.selectedCompanies.length === 0) {
           // Verificar si hay otros campos que puedan vincular esta solicitud con la empresa actual
@@ -413,7 +418,7 @@ const DashboardEmpresas: React.FC = () => {
           
           if (hasCompanyReference) {
             console.log(`Solicitud ${quote.id} asociada a la empresa por campos alternativos`);
-            return quote.status !== "confirmado" && quote.status !== "denegado";
+            return true;
           }
           
           return false;
@@ -444,8 +449,7 @@ const DashboardEmpresas: React.FC = () => {
           console.log(`Solicitud ${quote.id} seleccionada para la empresa actual`);
         }
         
-        // Solo incluir si está seleccionada Y no está confirmada/denegada
-        return isSelected && quote.status !== "confirmado" && quote.status !== "denegado";
+        return isSelected;
       });
 
       console.log("Solicitudes pendientes filtradas para la empresa:", filteredPendingQuotes.length);
@@ -457,8 +461,15 @@ const DashboardEmpresas: React.FC = () => {
         return dateB - dateA;
       });
       
-      setRealQuotes(filteredPendingQuotes);
-      setPendingQuotes(filteredPendingQuotes);
+      // Doble verificación: asegurarse de que las solicitudes no tengan status confirmado o denegado
+      const strictlyPendingQuotes = filteredPendingQuotes.filter(
+        quote => quote.status !== "confirmado" && quote.status !== "denegado"
+      );
+      
+      console.log("Solicitudes estrictamente pendientes (después de doble verificación):", strictlyPendingQuotes.length);
+      
+      setRealQuotes(strictlyPendingQuotes);
+      setPendingQuotes(strictlyPendingQuotes);
     } catch (error) {
       console.error("Error al cargar solicitudes:", error);
     }
@@ -566,6 +577,15 @@ const DashboardEmpresas: React.FC = () => {
     console.log("INICIANDO CARGA DE SOLICITUDES Y PEDIDOS");
     console.log("==========================================");
     loadQuotes();
+    
+    // Configurar un listener para actualizar los datos cada cierto tiempo
+    const intervalId = setInterval(() => {
+      console.log("Actualizando datos automáticamente...");
+      loadQuotes();
+    }, 60000); // Actualizar cada 60 segundos
+    
+    // Limpiar el intervalo cuando el componente se desmonte
+    return () => clearInterval(intervalId);
   }, []);
 
   useEffect(() => {
@@ -574,6 +594,8 @@ const DashboardEmpresas: React.FC = () => {
         const auth = getAuth();
         const user = auth.currentUser;
         if (!user) return;
+
+        console.log("[fetchMyQuotes] Cargando cotizaciones y solicitudes confirmadas para:", user.uid);
 
         // 1. Consultamos cotizaciones tradicionales
         const q = query(collection(db, "cotizaciones")); 
@@ -596,6 +618,8 @@ const DashboardEmpresas: React.FC = () => {
           deliveryStatus: doc.data().deliveryStatus ?? "pendiente",
           source: "solicitud"
         })) as Quote[];
+        
+        console.log("[fetchMyQuotes] Solicitudes confirmadas encontradas:", solicitudesConfirmadas.length);
 
         // Función para saber si la solicitud/cotización es de la empresa logueada
         const isForCurrentCompany = (quote: Quote) => {
@@ -767,6 +791,7 @@ const DashboardEmpresas: React.FC = () => {
       });
       
       // Crear un registro en la colección de entregas para que los repartidores puedan verlo
+      // y publicarlo automáticamente como en Rappi
       const deliveryData: any = {
         orderId: quoteId,
         companyId: user.uid,
@@ -778,14 +803,24 @@ const DashboardEmpresas: React.FC = () => {
         status: "pendingDriver" as DeliveryStatus,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
+        publishedAt: serverTimestamp(),
         deliveryAddress: quoteData.deliveryAddress || quoteData.address || "",
         deliveryFee: Number(quoteData.deliveryFee || 0),
         interestedDrivers: [], // Lista de repartidores que se han interesado en tomar el pedido
+        // Campos para publicación automática (estilo Rappi)
         isPublished: true,
         published: true,
         publicationStatus: "active",
         visibility: "public",
-        availableForDrivers: true
+        availableForDrivers: true,
+        searchable: true,
+        visibleInFeed: true,
+        driverStatus: "available",
+        region: "all",
+        readyForAssignment: true,
+        // Configuración de precio automática (precio fijo por defecto)
+        bidEnabled: false,
+        fixedPrice: Number(quoteData.totalAmount || quoteData.amount || quoteData.total || 0) * 0.1 || 5000 // 10% del total o 5000 por defecto
       };
       
       // Solo añadir deliveryCoordinates si existe y no es undefined
@@ -825,15 +860,21 @@ const DashboardEmpresas: React.FC = () => {
         const deliveryRef = await addDoc(collection(db, "deliveries"), deliveryData);
         console.log(`[handleConfirmQuote] ✅ Entrega creada para repartidores con ID: ${deliveryRef.id}`);
         
-        // Actualizar la solicitud con la referencia a la entrega
+        // Actualizar la solicitud con la referencia a la entrega y marcarla como publicada
         await updateDoc(quoteRef, {
-          deliveryId: deliveryRef.id
+          deliveryId: deliveryRef.id,
+          isPublished: true,
+          published: true,
+          deliveryPublished: true,
+          visibleToDrivers: true,
+          bidEnabled: false,
+          fixedPrice: Number(quoteData.totalAmount || quoteData.amount || quoteData.total || 0) * 0.1 || 5000
         });
         
-        // Añadir un comentario para notificar al cliente
+        // Añadir un comentario para notificar al cliente que el viaje ya está publicado (estilo Rappi)
         const newComment = {
           id: Date.now().toString(),
-          text: `¡Buenas noticias! Su solicitud ha sido aprobada por ${company.name}. Estamos buscando un repartidor disponible para su entrega. Le notificaremos cuando se asigne uno.`,
+          text: `¡Buenas noticias! Su solicitud ha sido aprobada por ${company.name} y el viaje ya ha sido publicado automáticamente. Los repartidores disponibles pueden verlo ahora mismo. Le notificaremos cuando un repartidor acepte el pedido.`,
           userId: user.uid,
           userName: company.name || user.displayName || "Empresa",
           createdAt: new Date().toISOString(),
@@ -851,43 +892,110 @@ const DashboardEmpresas: React.FC = () => {
         console.log(`[handleConfirmQuote] ✅ Solicitud ${quoteId} confirmada exitosamente en Firestore`);
         console.log(`[handleConfirmQuote] ✅ Notificación enviada al cliente`);
         
+        // Mostrar mensaje de éxito al usuario (estilo Rappi)
+        alert("¡Solicitud aceptada y viaje publicado automáticamente! Los repartidores ya pueden ver el pedido y aceptarlo.");
+        
         // Actualizar el estado local inmediatamente para feedback instantáneo
+        // Reflejando que el pedido está confirmado Y publicado (estilo Rappi)
+        
+        // Crear el objeto actualizado para el pedido confirmado
+        const updatedQuote = {
+          id: quoteId,
+          ...quoteData,
+          status: "confirmado", 
+          estadoEmpresa: "en_espera",
+          deliveryStatus: "pendingDriver",
+          deliveryId: deliveryRef.id,
+          isPublished: true,
+          published: true,
+          deliveryPublished: true,
+          bidEnabled: false,
+          fixedPrice: Number(quoteData.totalAmount || quoteData.amount || quoteData.total || 0) * 0.1 || 5000,
+          comments: [...(quoteData.comments || []), newComment]
+        };
+        
+        // Quitar la solicitud de realQuotes (para que desaparezca de pendientes)
         setRealQuotes(prevQuotes => {
-          const updated = prevQuotes.map(quote => 
-            quote.id === quoteId 
-              ? { 
-                  ...quote, 
-                  status: "confirmado", 
-                  estadoEmpresa: "en_espera",
-                  deliveryStatus: "pendingDriver",
-                  deliveryId: deliveryRef.id,
-                  comments: [...(quote.comments || []), newComment]
-                } 
-              : quote
-          );
-          console.log("[handleConfirmQuote] Estado local actualizado:", updated.find(q => q.id === quoteId));
-          return updated;
+          return prevQuotes.filter(quote => quote.id !== quoteId);
         });
         
-        // También actualizar acceptedQuotes si el pedido está ahí
+        // Quitar la solicitud de pendingQuotes (para que desaparezca de la vista de solicitudes pendientes)
+        setPendingQuotes(prevQuotes => {
+          return prevQuotes.filter(quote => quote.id !== quoteId);
+        });
+        
+        // Añadir la solicitud confirmada a acceptedQuotes
         setAcceptedQuotes(prevQuotes => {
-          return prevQuotes.map(quote => 
-            quote.id === quoteId 
-              ? { 
-                  ...quote, 
-                  status: "confirmado", 
-                  estadoEmpresa: "en_espera",
-                  deliveryStatus: "pendingDriver",
-                  deliveryId: deliveryRef.id,
-                } 
-              : quote
-          );
+          // Verificamos si ya existe en acceptedQuotes
+          const exists = prevQuotes.some(quote => quote.id === quoteId);
+          
+          if (exists) {
+            // Si ya existe, actualizamos sus datos
+            return prevQuotes.map(quote => 
+              quote.id === quoteId ? updatedQuote : quote
+            );
+          } else {
+            // Si no existe, la añadimos al principio del array
+            return [updatedQuote, ...prevQuotes];
+          }
         });
         
-        // Recargar todos los datos para asegurarnos de que todo está sincronizado
+        // No necesitamos recargar las solicitudes pendientes aquí, ya que las hemos actualizado manualmente
+        // Solo necesitamos recargar datos de cotizaciones aceptadas para asegurarnos de tener la información más actualizada
         setTimeout(() => {
-          console.log("[handleConfirmQuote] Recargando datos...");
-          loadQuotes();
+          console.log("[handleConfirmQuote] Actualizando datos de pedidos aceptados...");
+          
+          // Cargar las cotizaciones aceptadas directamente sin recargar las pendientes
+          const fetchAcceptedQuotes = async () => {
+            try {
+              if (!user) return;
+              
+              // Consultar solicitudes confirmadas
+              const qSolicitudes = query(
+                collection(db, "solicitud"),
+                where("status", "in", ["confirmado", "entregado"])
+              );
+              const snapshotSolicitudes = await getDocs(qSolicitudes);
+              const solicitudesConfirmadas = snapshotSolicitudes.docs
+                .map(doc => ({
+                  id: doc.id,
+                  ...doc.data(),
+                  deliveryStatus: doc.data().deliveryStatus ?? "pendiente",
+                  source: "solicitud"
+                }))
+                .filter(quote => {
+                  // Verificar si esta solicitud está relacionada con el usuario actual
+                  const quoteData = quote as any; // Usamos any para evitar errores de tipo
+                  return (
+                    quoteData.companyId === user.uid || 
+                    quoteData.userId === user.uid ||
+                    (quoteData.selectedCompanies && 
+                     Array.isArray(quoteData.selectedCompanies) &&
+                     quoteData.selectedCompanies.some((company: any) => 
+                       (typeof company === 'string' && company === user.uid) ||
+                       (typeof company === 'object' && company && 
+                        (company.id === user.uid || company.companyId === user.uid))
+                     ))
+                  );
+                }) as Quote[];
+              
+              console.log("[handleConfirmQuote] Solicitudes confirmadas actualizadas:", solicitudesConfirmadas.length);
+              
+              // Solo actualizar las cotizaciones aceptadas, no las pendientes
+              if (solicitudesConfirmadas.length > 0) {
+                setAcceptedQuotes(prevQuotes => {
+                  // Combinar solicitudes existentes con las nuevas, evitando duplicados
+                  const existingIds = new Set(prevQuotes.map(q => q.id));
+                  const newQuotes = solicitudesConfirmadas.filter(q => !existingIds.has(q.id));
+                  return [...prevQuotes, ...newQuotes];
+                });
+              }
+            } catch (error) {
+              console.error("[handleConfirmQuote] Error al recargar datos:", error);
+            }
+          };
+          
+          fetchAcceptedQuotes();
         }, 1000);
         
         return deliveryRef.id;
@@ -986,13 +1094,7 @@ const DashboardEmpresas: React.FC = () => {
     }
   };
   
-  // Estado para el modal de publicación
-  const [showPublishModal, setShowPublishModal] = useState(false);
-  const [selectedQuoteForPublish, setSelectedQuoteForPublish] = useState<string>("");
-  const [selectedDeliveryIdForPublish, setSelectedDeliveryIdForPublish] = useState<string>("");
-  const [isPriceFixed, setIsPriceFixed] = useState<boolean>(true);
-  const [fixedPrice, setFixedPrice] = useState<number>(0);
-  const [minBidPrice, setMinBidPrice] = useState<number>(0);
+  // Se eliminaron los estados relacionados con la publicación manual
 
   // Función para despublicar un viaje
   const handleUnpublishDelivery = async (quoteId: string, deliveryId: string) => {
@@ -1127,24 +1229,7 @@ const DashboardEmpresas: React.FC = () => {
     }
   };
 
-  // Función para iniciar el proceso de publicación con opciones
-  const startPublishProcess = (quoteId: string, deliveryId?: string) => {
-    setSelectedQuoteForPublish(quoteId);
-    setSelectedDeliveryIdForPublish(deliveryId || "");
-    
-    // Buscar el valor predeterminado para el precio fijo
-    const quote = [...realQuotes, ...acceptedQuotes].find(q => q.id === quoteId);
-    if (quote) {
-      const defaultPrice = Number(quote.totalAmount || quote.amount || quote.total || 0);
-      setFixedPrice(defaultPrice > 0 ? defaultPrice * 0.1 : 5000); // 10% del total o 5000 por defecto
-      setMinBidPrice(defaultPrice > 0 ? defaultPrice * 0.05 : 2500); // 5% del total o 2500 por defecto
-    } else {
-      setFixedPrice(5000);
-      setMinBidPrice(2500);
-    }
-    
-    setShowPublishModal(true);
-  };
+  // Se eliminó la función de inicio de proceso de publicación ya que ahora es automático
 
   // Función para publicar un viaje para que los repartidores lo vean
   const handlePublishDelivery = async (quoteId: string, deliveryId?: string, options?: { 
@@ -1488,8 +1573,7 @@ const DashboardEmpresas: React.FC = () => {
           );
         });
         
-        // Ocultar el modal si estaba abierto
-        setShowPublishModal(false);
+        // Ya no necesitamos ocultar el modal porque ha sido eliminado
         
         // Recargar datos para ver cambios
         setTimeout(() => {
@@ -1522,10 +1606,17 @@ const DashboardEmpresas: React.FC = () => {
       
       console.log(`[handleDenyQuote] ❌ Solicitud ${quoteId} denegada en Firestore`);
       
-      // Actualizar el estado local
+      // Actualizar ambos estados locales para asegurar que la solicitud desaparece completamente
       setRealQuotes(prevQuotes => {
         const filtered = prevQuotes.filter(quote => quote.id !== quoteId);
-        console.log("[handleDenyQuote] Eliminando solicitud del estado local");
+        console.log("[handleDenyQuote] Eliminando solicitud del estado realQuotes");
+        return filtered;
+      });
+      
+      // También actualizar pendingQuotes para que desaparezca de la vista de solicitudes pendientes
+      setPendingQuotes(prevQuotes => {
+        const filtered = prevQuotes.filter(quote => quote.id !== quoteId);
+        console.log("[handleDenyQuote] Eliminando solicitud del estado pendingQuotes");
         return filtered;
       });
       
@@ -1665,24 +1756,6 @@ const DashboardEmpresas: React.FC = () => {
             </Card>
           ))}
         </div>
-
-        {/* ALERTA PARA PEDIDOS SIN PUBLICAR */}
-        {acceptedQuotes.some(q => !q.driverId && (!q.isPublished && !q.published)) && (
-          <div className="bg-red-50 border-2 border-red-300 p-4 rounded-xl mt-4 animate-pulse">
-            <div className="flex items-center gap-3">
-              <div className="bg-red-100 p-3 rounded-full">
-                <AlertCircle className="h-6 w-6 text-red-600" />
-              </div>
-              <div className="flex-1">
-                <h3 className="text-lg font-bold text-red-800">¡Atención! Tienes pedidos sin publicar</h3>
-                <p className="text-sm text-red-700">
-                  Hay pedidos que necesitan ser publicados para que los repartidores puedan verlos. 
-                  Busca el botón "Publicar Viaje" junto a "Actualizar Estado" en los pedidos resaltados.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
         
         {/* Pedidos Aceptados - En Proceso */}
         {acceptedQuotes.length > 0 && (
@@ -1938,11 +2011,7 @@ const DashboardEmpresas: React.FC = () => {
                               <TruckIcon className="h-3.5 w-3.5 mr-1.5 text-amber-600" />
                               Esperando Repartidor
                             </h4>
-                            {quote.isPublished && (
-                              <Badge className="bg-purple-100 text-purple-800 text-xs">
-                                ✓ Viaje publicado
-                              </Badge>
-                            )}
+                            {/* Se eliminó el badge de viaje publicado ya que ahora es automático */}
                           </div>
                           
                           {/* Si hay repartidores interesados, mostrarlos */}
@@ -1982,7 +2051,7 @@ const DashboardEmpresas: React.FC = () => {
                           ) : (
                             <div>
                               <p className="text-xs text-amber-700 mb-3">
-                                Aún no hay repartidores interesados en este pedido. Puedes publicar el viaje para que sea visible para todos los repartidores disponibles.
+                                Aún no hay repartidores interesados en este pedido. El pedido ya está visible para todos los repartidores disponibles.
                               </p>
                               {/* Botón borrado */}
                               {(quote.isPublished || quote.published) && (
@@ -2020,51 +2089,12 @@ const DashboardEmpresas: React.FC = () => {
                           <TruckIcon className="w-3 h-3 mr-1" />
                           Actualizar Estado
                         </Button>
-                        {/* SOLUCIÓN PARA PEDIDOS SIN REPARTIDOR: Botón para publicar viaje SIEMPRE visible para pedidos sin repartidor */}
-                        {/* Siempre mostramos el botón si no hay repartidor asignado */}
-                        {!quote.driverId && (
-                          <Button
-                            size="sm"
-                            className="bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white text-xs px-3 py-1 sm:px-3 sm:py-1.5 h-auto rounded-lg shadow-md border-2 border-purple-400 w-full sm:w-auto flex items-center justify-center animate-pulse"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (isProcessing) {
-                                alert("Hay un proceso en curso. Por favor espere.");
-                                return;
-                              }
-                              
-                              // Iniciar el proceso de publicación con opciones
-                              startPublishProcess(quote.id, quote.deliveryId);
-                            }}
-                            disabled={isProcessing || (quote.isPublished || quote.published)}
-                          >
-                            <TruckIcon className="w-3 h-3 mr-1" />
-                            {quote.isPublished || quote.published ? "Ya Publicado" : "Publicar Viaje"}
-                          </Button>
-                        )}
-                        {/* Botón para publicar viaje */}
-                        {/* Botón eliminado */}
-                        {/* Indicador de viaje publicado */}
-                        {quote.deliveryId && (quote.isPublished || quote.published) && !quote.driverId && (
+                        {/* Indicador de solicitud procesada automáticamente */}
+                        {quote.deliveryId && !quote.driverId && (
                           <div className="flex items-center gap-2">
-                            <Badge className="bg-purple-100 text-purple-800 text-xs h-auto sm:self-center px-2 py-1 flex items-center">
-                              ✓ Viaje publicado
+                            <Badge className="bg-green-100 text-green-800 text-xs h-auto sm:self-center px-2 py-1 flex items-center">
+                              ✓ Solicitud procesada
                             </Badge>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="bg-red-50 border-red-200 text-red-600 hover:bg-red-100 text-xs px-2 py-1 sm:px-3 sm:py-1 h-auto rounded-lg"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (window.confirm("¿Estás seguro de que deseas despublicar este viaje? Los repartidores ya no podrán verlo.")) {
-                                  handleUnpublishDelivery(quote.id, quote.deliveryId!);
-                                }
-                              }}
-                              disabled={isProcessing}
-                            >
-                              <X className="w-3 h-3 mr-1" />
-                              Despublicar
-                            </Button>
                           </div>
                         )}
                       </div>
@@ -2535,112 +2565,7 @@ const DashboardEmpresas: React.FC = () => {
         </Card>
       </div>
       
-      {/* Modal para publicar viaje con opciones */}
-      <Dialog open={showPublishModal} onOpenChange={setShowPublishModal}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-center text-xl font-semibold">Publicar Viaje para Repartidores</DialogTitle>
-            <DialogDescription className="text-center">
-              Elige cómo quieres manejar el pago para este viaje
-            </DialogDescription>
-          </DialogHeader>
-          
-          <div className="py-4 space-y-6">
-            <RadioGroup 
-              value={isPriceFixed ? "fixedPrice" : "bidEnabled"}
-              onValueChange={(value) => setIsPriceFixed(value === "fixedPrice")}
-              className="space-y-4"
-            >
-              <div className="flex items-start space-x-2 border p-4 rounded-lg hover:border-blue-200 hover:bg-blue-50">
-                <RadioGroupItem value="fixedPrice" id="fixedPrice" />
-                <div className="grid gap-1.5">
-                  <Label htmlFor="fixedPrice" className="font-medium">
-                    Definir precio fijo
-                  </Label>
-                  <p className="text-sm text-muted-foreground">
-                    Establece un precio fijo para la entrega. El repartidor solo podrá aceptar o rechazar.
-                  </p>
-                  {isPriceFixed && (
-                    <div className="mt-2">
-                      <Label htmlFor="price" className="text-sm mb-1 block">
-                        Precio para el repartidor ($)
-                      </Label>
-                      <Input
-                        id="price"
-                        type="number"
-                        placeholder="Ejemplo: 5000"
-                        value={fixedPrice}
-                        onChange={(e) => setFixedPrice(Number(e.target.value))}
-                        className="w-full"
-                      />
-                    </div>
-                  )}
-                </div>
-              </div>
-              
-              <div className="flex items-start space-x-2 border p-4 rounded-lg hover:border-blue-200 hover:bg-blue-50">
-                <RadioGroupItem value="bidEnabled" id="bidEnabled" />
-                <div className="grid gap-1.5">
-                  <Label htmlFor="bidEnabled" className="font-medium">
-                    Recibir ofertas de repartidores
-                  </Label>
-                  <p className="text-sm text-muted-foreground">
-                    Los repartidores podrán enviar su oferta (precio) por el que están dispuestos a realizar la entrega.
-                  </p>
-                  {!isPriceFixed && (
-                    <div className="mt-2">
-                      <Label htmlFor="minBidPrice" className="text-sm mb-1 block">
-                        Precio mínimo para ofertas ($)
-                      </Label>
-                      <Input
-                        id="minBidPrice"
-                        type="number"
-                        placeholder="Ejemplo: 2500"
-                        value={minBidPrice}
-                        onChange={(e) => setMinBidPrice(Number(e.target.value))}
-                        className="w-full"
-                      />
-                    </div>
-                  )}
-                </div>
-              </div>
-            </RadioGroup>
-          </div>
-          
-          <DialogFooter className="sm:justify-between">
-            <Button
-              variant="outline"
-              onClick={() => setShowPublishModal(false)}
-              disabled={isProcessing}
-            >
-              Cancelar
-            </Button>
-            <Button
-              onClick={() => {
-                if (isPriceFixed && (!fixedPrice || fixedPrice <= 0)) {
-                  alert("Por favor, ingresa un precio fijo válido mayor a cero.");
-                  return;
-                }
-                
-                if (!isPriceFixed && (!minBidPrice || minBidPrice <= 0)) {
-                  alert("Por favor, ingresa un precio mínimo válido mayor a cero.");
-                  return;
-                }
-                
-                const options = isPriceFixed 
-                  ? { bidEnabled: false, fixedPrice: fixedPrice } 
-                  : { bidEnabled: true, minBidPrice: minBidPrice };
-                
-                handlePublishDelivery(selectedQuoteForPublish, selectedDeliveryIdForPublish, options);
-              }}
-              disabled={isProcessing}
-              className="bg-green-600 hover:bg-green-700 text-white"
-            >
-              {isProcessing ? "Publicando..." : "Publicar Viaje"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Se eliminó el modal de publicación manual ya que ahora es automático */}
     </DashboardLayout>
   );
 };

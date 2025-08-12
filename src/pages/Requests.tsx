@@ -61,6 +61,9 @@ interface UserRequest {
   autoQuotes?: AutoQuoteItem[];
   selectedCompanies?: SelectedCompany[];
   savings?: number; // Campo opcional para el ahorro
+  driverId?: string; // ID del repartidor asignado
+  deliveryStatus?: string; // Estado de la entrega
+  deliveryId?: string; // ID de la entrega asociada
 }
 
 import { useLocation } from 'react-router-dom';
@@ -370,6 +373,16 @@ const Requests = () => {
           
           console.log(`[Solicitud ${doc.id}] Ahorro detectado: $${savingsValue}`);
           
+          // Registrar información de entrega para depuración
+          if (data.status === 'confirmado' || data.deliveryId) {
+            console.log(`[Solicitud ${doc.id}] Estado de entrega:`, {
+              deliveryId: data.deliveryId || "No disponible",
+              driverId: data.driverId || "Sin repartidor",
+              deliveryStatus: data.deliveryStatus || "Estado no definido",
+              status: data.status
+            });
+          }
+          
           return {
             id: doc.id,
             status: data.status ?? "pendiente",
@@ -388,6 +401,9 @@ const Requests = () => {
             selectedCompanies: selectedCompanies,
             selectedCompanyIds: data.selectedCompanyIds || [],
             savings: savingsValue, // Ahorro normalizado como número
+            driverId: data.driverId || null, // ID del repartidor asignado (si existe)
+            deliveryStatus: data.deliveryStatus || null, // Estado de la entrega
+            deliveryId: data.deliveryId || null, // ID de la entrega asociada
           };
         }) as UserRequest[];
 
@@ -1028,19 +1044,41 @@ const Requests = () => {
                 >
                   {/* Header con estado y fecha */}
                   <div className="bg-gradient-to-r from-blue-50 to-blue-100 px-4 py-3 flex items-center justify-between relative">
-                    <div className="flex items-center space-x-2">
-                      <div className={`w-3 h-3 rounded-full ${
-                        request.status === 'cotizando' ? 'bg-blue-500 animate-pulse' : 
-                        request.status === 'confirmado' ? 'bg-orange-500' : 
-                        request.status === 'completado' ? 'bg-green-500' :
-                        request.status === 'entregado' ? 'bg-purple-500' : 'bg-gray-400'
-                      }`}></div>
-                      <span className="text-xs font-medium text-gray-700 capitalize">
-                        {request.status === 'cotizando' ? 'En cotización' : 
-                         request.status === 'confirmado' ? 'Confirmada' :
-                         request.status === 'completado' ? 'Completada' :
-                         request.status === 'entregado' ? 'Entregada' : request.status}
-                      </span>
+                    <div className="flex flex-col space-y-1">
+                      <div className="flex items-center space-x-2">
+                        <div className={`w-3 h-3 rounded-full ${
+                          request.status === 'cotizando' ? 'bg-blue-500 animate-pulse' : 
+                          request.status === 'confirmado' ? 'bg-orange-500' : 
+                          request.status === 'completado' ? 'bg-green-500' :
+                          request.status === 'entregado' ? 'bg-purple-500' : 'bg-gray-400'
+                        }`}></div>
+                        <span className="text-xs font-medium text-gray-700 capitalize">
+                          {request.status === 'cotizando' ? 'En cotización' : 
+                           request.status === 'confirmado' ? 'Confirmada' :
+                           request.status === 'completado' ? 'Completada' :
+                           request.status === 'entregado' ? 'Entregada' : request.status}
+                        </span>
+                      </div>
+                      
+                      {/* Mostrar estado del repartidor si está en confirmado, en proceso, o entregado */}
+                      {(request.status === 'confirmado' || request.status === 'entregado' || request.deliveryId) && (
+                        <div className="flex items-center space-x-1">
+                          <div className={`w-2 h-2 rounded-full ${
+                            request.driverId ? 'bg-green-500' : 
+                            request.deliveryId ? 'bg-amber-500 animate-pulse' : 'bg-gray-400'
+                          }`}></div>
+                          <span className="text-xs text-gray-600">
+                            {request.driverId ? (
+                              request.deliveryStatus === 'en_camino' ? 'En camino' : 
+                              request.deliveryStatus === 'entregado' ? 'Entregado' : 
+                              request.deliveryStatus === 'recogido' ? 'Recogido' :
+                              request.deliveryStatus === 'driverAssigned' ? 'Repartidor asignado' :
+                              request.deliveryStatus === 'pendingDriver' ? 'Buscando repartidor' :
+                              'Repartidor asignado'
+                            ) : request.deliveryId ? 'A espera de repartidor' : 'En preparación'}
+                          </span>
+                        </div>
+                      )}
                     </div>
                     <span className="text-xs text-gray-500">
                       {new Date(request.createdAt).toLocaleDateString('es-ES', {
