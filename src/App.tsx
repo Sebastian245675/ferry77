@@ -51,6 +51,7 @@ import CompanyDeliveryTracking from "./pages/CompanyDeliveryTracking";
   import PendientesUsuarios from "./pages/admin/Pages/usuarios/pendientes";
   import ActivosUsuarios from "./pages/admin/Pages/usuarios/activos";
   import RechazadosUsuarios from "./pages/admin/Pages/usuarios/rechazados";
+  import SolicitudesUsuarios from "./pages/admin/Pages/usuarios/solicitudes";
 
 
 import { onAuthStateChanged } from "firebase/auth";
@@ -172,6 +173,15 @@ const App = () => {
                       </RequireAdmin>
                     }
                   />
+
+                  <Route
+                  path="/admin/usuarios/solicitudes"
+                  element={
+                    <RequireAdmin>
+                      <SolicitudesUsuarios />
+                    </RequireAdmin>
+                  }
+                />
 
 
                    {/* Ruta protegida para admin */}  

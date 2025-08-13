@@ -10,6 +10,7 @@ import {
   UserX,
   Building2,
   Truck,
+  Inbox,
 } from "lucide-react";
 
 interface AdminLayoutProps {
@@ -72,6 +73,18 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
               <Home className="w-4 h-4" />
               <span>Todos los usuarios</span>
             </NavLink>
+            <NavLink
+              to="/admin/usuarios/solicitudes"
+              className={({ isActive }) =>
+                `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium ${
+                  isActive ? "bg-blue-50 text-blue-700" : "text-gray-700 hover:bg-gray-50"
+                }`
+              }
+            >
+              <Inbox className="w-4 h-4" />
+              <span>Todas las solicitudes</span>
+            </NavLink>
+
           </div>
         </div>
 
