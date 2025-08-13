@@ -43,6 +43,16 @@ import DeliveryPriceProposal from "./pages/DeliveryPriceProposal";
 import UserDeliveryTracking from "./pages/UserDeliveryTracking";
 import CompanyDeliveryTracking from "./pages/CompanyDeliveryTracking";
 
+  //admin
+  import { RequireAdmin } from "@/pages/admin/hooks/useAdminAuth";
+  import AdminDashboard from "@/pages/admin/Pages/Dashboard";
+    //vistas
+  import TodosUsuarios from "@/pages/admin/Pages/usuarios/todos";
+  import PendientesUsuarios from "./pages/admin/Pages/usuarios/pendientes";
+  import ActivosUsuarios from "./pages/admin/Pages/usuarios/activos";
+  import RechazadosUsuarios from "./pages/admin/Pages/usuarios/rechazados";
+
+
 import { onAuthStateChanged } from "firebase/auth";
 import { auth } from "./lib/firebase";
 import { useEffect, useState } from "react";
@@ -117,6 +127,54 @@ const App = () => {
               </>
             ) : (
               <>
+                  {/* Ruta protegida para admin */}
+                    <Route
+                      path="/admin"
+                      element={
+                        <RequireAdmin>
+                          <AdminDashboard />
+                        </RequireAdmin>
+                      }
+                    />
+
+                     <Route
+                      path="/admin/usuarios/todos"
+                      element={
+                        <RequireAdmin>
+                          <TodosUsuarios />
+                        </RequireAdmin>
+                      }
+                    />
+
+                    <Route
+                      path="/admin/usuarios/verificar"
+                      element={
+                        <RequireAdmin>
+                          <PendientesUsuarios />
+                        </RequireAdmin>
+                      }
+                    />
+
+                    <Route
+                      path="/admin/usuarios/activos"
+                      element={
+                        <RequireAdmin>
+                          <ActivosUsuarios />
+                        </RequireAdmin>
+                      }
+                    />
+
+                    <Route
+                    path="/admin/usuarios/rechazados"
+                    element={
+                      <RequireAdmin>
+                        <RechazadosUsuarios />
+                      </RequireAdmin>
+                    }
+                  />
+
+
+                   {/* Ruta protegida para admin */}  
                 <Route path="/" element={<Home />} />
                 <Route path="/demo" element={<Demo />} />
                 <Route path="/auth" element={<Auth />} />
@@ -148,6 +206,7 @@ const App = () => {
                 <Route path="/company-panel" element={<DashboardEmpresas />} />
                 <Route path="/order-status" element={<OrderStatus />} />
                 <Route path="/order-tracking" element={<OrderTracking />} />
+
                 {/* Rutas para repartidores */}
                 <Route path="/delivery-dashboard" element={<DeliveryDashboard />} />
                 <Route path="/delivery-details/:id" element={<DeliveryDetails />} />
