@@ -25,6 +25,7 @@ import {
   TruckIcon,
   Package,
   User,
+  UserCheck,
   DollarSign,
   Truck,
   MapPin,
@@ -32,7 +33,8 @@ import {
   X,
   Check,
   Calendar,
-  Info
+  Info,
+  RefreshCw
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import DashboardLayout from "@/components/barraempresa";
@@ -399,12 +401,28 @@ const DashboardEmpresas: React.FC = () => {
           shouldShowButton: !!(q.deliveryId && !q.driverId && (!q.isPublished && !q.published))
         }))
       );
+      
+      // Depuración para pedidos con repartidor asignado
+      console.log("PEDIDOS CON REPARTIDOR ASIGNADO:", quotesWithDriverInfo
+        .filter(q => q.driverId || q.deliveryStatus === "driverAssigned")
+        .map(q => ({
+          id: q.id,
+          title: q.title || q.requestTitle || "Sin título",
+          status: q.status || "Sin estado",
+          deliveryStatus: q.deliveryStatus || "Sin estado de entrega",
+          driverId: q.driverId || "No especificado",
+          isDriverAssigned: q.deliveryStatus === "driverAssigned"
+        }))
+      );
 
       // Filtrar para mostrar solo las solicitudes donde esta empresa esté seleccionada
-      // y que NO estén confirmadas ni denegadas (solo las pendientes)
+      // y que NO estén confirmadas, denegadas o con repartidor asignado (solo las pendientes)
       const filteredPendingQuotes = quotesWithDriverInfo.filter(quote => {
-        // Si ya está confirmada o denegada, no es una solicitud pendiente
-        if (quote.status === "confirmado" || quote.status === "denegado") {
+        // Si ya está confirmada, denegada o con repartidor asignado, no es una solicitud pendiente
+        if (quote.status === "confirmado" || 
+            quote.status === "denegado" || 
+            quote.deliveryStatus === "driverAssigned" || 
+            quote.driverId) {
           return false;
         }
         
@@ -461,9 +479,15 @@ const DashboardEmpresas: React.FC = () => {
         return dateB - dateA;
       });
       
-      // Doble verificación: asegurarse de que las solicitudes no tengan status confirmado o denegado
+      // Doble verificación: asegurarse de que las solicitudes no tengan status confirmado, denegado,
+      // o con repartidor asignado. Esto es crítico para que no aparezcan pedidos con repartidor en la sección pendientes.
       const strictlyPendingQuotes = filteredPendingQuotes.filter(
-        quote => quote.status !== "confirmado" && quote.status !== "denegado"
+        quote => quote.status !== "confirmado" && 
+                quote.status !== "denegado" && 
+                quote.deliveryStatus !== "driverAssigned" &&
+                !quote.driverId &&
+                quote.estadoEmpresa !== "en_progreso" &&
+                (quote.activeForCompany !== true) // También excluir los marcados explícitamente como activos
       );
       
       console.log("Solicitudes estrictamente pendientes (después de doble verificación):", strictlyPendingQuotes.length);
@@ -570,6 +594,98 @@ const DashboardEmpresas: React.FC = () => {
     
     return { pending: pendingCount, active: activeCount, completed: completedCount };
   };
+  
+  // Función para refrescar manualmente los pedidos activos
+  const refreshActiveOrders = async () => {
+    try {
+      setIsProcessing(true);
+      const auth = getAuth();
+      const user = auth.currentUser;
+      if (!user) return;
+      
+      console.log("[refreshActiveOrders] Actualizando pedidos activos manualmente...");
+      
+      // Buscar solicitudes con estado confirmado o con repartidor asignado
+      const qActiveOrders = query(
+        collection(db, "solicitud"),
+        where("status", "==", "confirmado")
+      );
+      
+      // Consulta para repartidores asignados - buscar por deliveryStatus
+      const qDriverAssigned = query(
+        collection(db, "solicitud"),
+        where("deliveryStatus", "==", "driverAssigned")
+      );
+      
+      // Consulta adicional para encontrar pedidos que tienen un driverId asignado
+      const qWithDriverId = query(
+        collection(db, "solicitud"),
+        where("driverId", "!=", "")
+      );
+      
+      // Consulta para pedidos activos para la empresa
+      const qActiveForCompany = query(
+        collection(db, "solicitud"),
+        where("activeForCompany", "==", true)
+      );
+      
+      // Ejecutar todas las consultas
+      const [activeOrdersSnapshot, driverAssignedSnapshot, withDriverIdSnapshot, activeForCompanySnapshot] = await Promise.all([
+        getDocs(qActiveOrders),
+        getDocs(qDriverAssigned),
+        getDocs(qWithDriverId),
+        getDocs(qActiveForCompany)
+      ]);
+      
+      // Combinar resultados
+      const allActiveOrdersData = [
+        ...activeOrdersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })),
+        ...driverAssignedSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })),
+        ...withDriverIdSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })),
+        ...activeForCompanySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
+      ];
+      
+      // Eliminar duplicados
+      const uniqueOrders = [];
+      const seenIds = new Set();
+      
+      allActiveOrdersData.forEach(order => {
+        if (!seenIds.has(order.id)) {
+          seenIds.add(order.id);
+          uniqueOrders.push(order);
+        }
+      });
+      
+      // Filtrar para la empresa actual
+      const filteredOrders = uniqueOrders.filter(order => {
+        // Verificar si el pedido pertenece a esta empresa
+        if (order.companyId === user.uid) return true;
+        
+        // Verificar en selectedCompanies
+        if (order.selectedCompanies && Array.isArray(order.selectedCompanies)) {
+          return order.selectedCompanies.some(company => {
+            if (typeof company === 'string') return company === user.uid;
+            if (typeof company === 'object') {
+              return company.id === user.uid || company.companyId === user.uid;
+            }
+            return false;
+          });
+        }
+        
+        return false;
+      });
+      
+      console.log(`[refreshActiveOrders] Encontrados ${filteredOrders.length} pedidos activos`);
+      
+      // Actualizar el estado
+      setAcceptedQuotes(filteredOrders);
+      
+    } catch (error) {
+      console.error("Error al refrescar pedidos activos:", error);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   // Cargar solicitudes cuando el componente se monta
   useEffect(() => {
@@ -578,10 +694,20 @@ const DashboardEmpresas: React.FC = () => {
     console.log("==========================================");
     loadQuotes();
     
+    // Después de cargar las cotizaciones, refrescar pedidos activos con la nueva función
+    setTimeout(() => {
+      refreshActiveOrders();
+    }, 1500);
+    
     // Configurar un listener para actualizar los datos cada cierto tiempo
     const intervalId = setInterval(() => {
       console.log("Actualizando datos automáticamente...");
       loadQuotes();
+      
+      // También refrescar pedidos activos periódicamente
+      setTimeout(() => {
+        refreshActiveOrders();
+      }, 1000);
     }, 60000); // Actualizar cada 60 segundos
     
     // Limpiar el intervalo cuando el componente se desmonte
@@ -606,10 +732,22 @@ const DashboardEmpresas: React.FC = () => {
           source: "cotizaciones"
         })) as Quote[];
 
-        // 2. Consultamos solicitudes confirmadas (incluyendo pedidos entregados)
+        // 2. Consultamos solicitudes confirmadas y con repartidor asignado (incluyendo pedidos entregados)
         const qSolicitudes = query(
           collection(db, "solicitud"),
           where("status", "in", ["confirmado", "entregado"])
+        );
+        
+        // También necesitamos buscar las solicitudes donde el estado de entrega sea driverAssigned
+        const qDriverAssignedSolicitudes = query(
+          collection(db, "solicitud"),
+          where("deliveryStatus", "==", "driverAssigned")
+        );
+        
+        // Nueva consulta: buscar cualquier solicitud que tenga un repartidor asignado
+        const qWithDriverSolicitudes = query(
+          collection(db, "solicitud"), 
+          where("driverId", "!=", "")
         );
         const snapshotSolicitudes = await getDocs(qSolicitudes);
         const solicitudesConfirmadas = snapshotSolicitudes.docs.map(doc => ({
@@ -618,8 +756,44 @@ const DashboardEmpresas: React.FC = () => {
           deliveryStatus: doc.data().deliveryStatus ?? "pendiente",
           source: "solicitud"
         })) as Quote[];
+
+        // Obtener también las solicitudes con repartidor asignado
+        const snapshotDriverAssigned = await getDocs(qDriverAssignedSolicitudes);
+        const solicitudesDriverAssigned = snapshotDriverAssigned.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+          source: "solicitud"
+        })) as Quote[];
         
-        console.log("[fetchMyQuotes] Solicitudes confirmadas encontradas:", solicitudesConfirmadas.length);
+        // Obtener las solicitudes con driverId explícitamente asignado
+        const snapshotWithDriver = await getDocs(qWithDriverSolicitudes);
+        const solicitudesWithDriver = snapshotWithDriver.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+          source: "solicitud"
+        })) as Quote[];
+        
+        // Combinamos todas las listas, eliminando duplicados por ID
+        const todasSolicitudes = [...solicitudesConfirmadas];
+        
+        // Agregar solicitudes con repartidor asignado, evitando duplicados
+        solicitudesDriverAssigned.forEach(solicitud => {
+          if (!todasSolicitudes.some(s => s.id === solicitud.id)) {
+            todasSolicitudes.push(solicitud);
+          }
+        });
+        
+        // Agregar solicitudes con driverId, evitando duplicados
+        solicitudesWithDriver.forEach(solicitud => {
+          if (!todasSolicitudes.some(s => s.id === solicitud.id)) {
+            todasSolicitudes.push(solicitud);
+          }
+        });
+        
+        console.log("[fetchMyQuotes] Total de solicitudes encontradas:", todasSolicitudes.length);
+        console.log("[fetchMyQuotes] Desglose: Confirmadas:", solicitudesConfirmadas.length, 
+                    "Con repartidor asignado:", solicitudesDriverAssigned.length,
+                    "Con driverId:", solicitudesWithDriver.length);
 
         // Función para saber si la solicitud/cotización es de la empresa logueada
         const isForCurrentCompany = (quote: Quote) => {
@@ -655,7 +829,7 @@ const DashboardEmpresas: React.FC = () => {
 
         // Filtrar solo las cotizaciones y solicitudes de la empresa logueada
         const filteredCotizaciones = cotizacionesData.filter(isForCurrentCompany);
-        const filteredSolicitudes = solicitudesConfirmadas.filter(isForCurrentCompany);
+        const filteredSolicitudes = todasSolicitudes.filter(isForCurrentCompany);
         
         // Combinar datos
         const allData = [...filteredCotizaciones, ...filteredSolicitudes];
@@ -687,20 +861,26 @@ const DashboardEmpresas: React.FC = () => {
             items: quote.items ? quote.items.map(i => i.name) : []
           });
           
+          // PRIORIDAD: Si tiene repartidor asignado o es un pedido activo, incluirlo siempre
+          if (quote.driverId || 
+              quote.deliveryStatus === "driverAssigned" ||
+              quote.activeForCompany === true) {
+            console.log(`[fetchMyQuotes] Pedido ${quote.id} incluido por tener repartidor o ser activo`);
+            return true;
+          }
+          
           // Incluir todos los pedidos confirmados o en proceso
           return (
             quote.status === "accepted" ||
             quote.status === "confirmado" ||
-            quote.status === "recibida" ||
-            quote.status === "pendiente" ||
-            quote.status === "pendingDriver" || 
+            quote.status === "recibida" || 
             quote.status === "enviado" ||
             quote.status === "en_camino" ||
-            quote.deliveryStatus === "pendiente" ||
             quote.deliveryStatus === "pendingDriver" ||
             quote.deliveryStatus === "enviado" ||
             quote.deliveryStatus === "en_camino" ||
-            quote.estadoEmpresa === "en_espera"
+            quote.estadoEmpresa === "en_espera" ||
+            quote.estadoEmpresa === "en_progreso"
           );
         });
         console.log("Pedidos activos:", active.length);
@@ -1033,8 +1213,13 @@ const DashboardEmpresas: React.FC = () => {
       const quoteRef = doc(db, "solicitud", quoteId);
       await updateDoc(quoteRef, {
         deliveryStatus: "driverAssigned",
+        status: "confirmado", // Asegurar que el estado principal está confirmado
+        estadoEmpresa: "en_progreso", // Cambiar estado de la empresa a "en_progreso"
         driverId: driverId,
-        assignedAt: serverTimestamp()
+        assignedAt: serverTimestamp(),
+        // Marcarlo explícitamente como activo para la empresa
+        isActive: true,
+        activeForCompany: true
       });
       
       // Obtener información del repartidor
@@ -1064,27 +1249,154 @@ const DashboardEmpresas: React.FC = () => {
         }
       }
       
-      // Actualizar el estado local
+      // Actualizar el estado local - remover el pedido de la lista de pendientes
       setRealQuotes(prevQuotes => {
-        const updated = prevQuotes.map(quote => 
-          quote.id === quoteId 
-            ? { 
-                ...quote, 
-                deliveryStatus: "driverAssigned",
-                driverId: driverId
-              } 
-            : quote
-        );
-        return updated;
+        return prevQuotes.filter(quote => quote.id !== quoteId);
+      });
+      
+      // Actualizar también las solicitudes pendientes
+      setPendingQuotes(prevQuotes => {
+        return prevQuotes.filter(quote => quote.id !== quoteId);
+      });
+      
+      // Añadir el pedido actualizado a la lista de pedidos activos
+      setAcceptedQuotes(prevQuotes => {
+        const isAlreadyInList = prevQuotes.some(quote => quote.id === quoteId);
+        
+        if (isAlreadyInList) {
+          return prevQuotes.map(quote => 
+            quote.id === quoteId 
+              ? { 
+                  ...quote, 
+                  deliveryStatus: "driverAssigned",
+                  status: "confirmado",
+                  estadoEmpresa: "en_progreso",
+                  driverId: driverId
+                } 
+              : quote
+          );
+        } else {
+          // Buscar el pedido original en las quotes reales
+          const originalQuote = [...realQuotes].find(q => q.id === quoteId);
+          if (originalQuote) {
+            const updatedQuote = {
+              ...originalQuote,
+              deliveryStatus: "driverAssigned",
+              status: "confirmado",
+              estadoEmpresa: "en_progreso",
+              driverId: driverId
+            };
+            return [...prevQuotes, updatedQuote];
+          }
+          
+          // Si no encontramos la cotización en realQuotes, intentamos buscarla en la base de datos
+          setTimeout(async () => {
+            try {
+              const quoteRef = doc(db, "solicitud", quoteId);
+              const quoteSnapshot = await getDoc(quoteRef);
+              if (quoteSnapshot.exists()) {
+                const quoteData = quoteSnapshot.data();
+                // Forzar actualización de aceptedQuotes con los datos más recientes
+                setAcceptedQuotes(current => [
+                  ...current, 
+                  { 
+                    id: quoteId,
+                    ...quoteData,
+                    deliveryStatus: "driverAssigned",
+                    status: "confirmado",
+                    estadoEmpresa: "en_progreso",
+                    driverId: driverId
+                  }
+                ]);
+              }
+            } catch (error) {
+              console.error("Error al actualizar el estado local con datos de la BD:", error);
+            }
+          }, 500);
+          
+          return prevQuotes;
+        }
       });
       
       // Mostrar alerta de éxito
       alert("Repartidor asignado exitosamente. El cliente ha sido notificado.");
       
-      // Recargar datos
+      // Recargar datos - primero cargamos las cotizaciones nuevamente
       setTimeout(() => {
         loadQuotes();
+        
+        // También ejecutamos fetchMyQuotes para asegurarnos de cargar los pedidos activos
+        const refreshMyQuotes = async () => {
+          try {
+            const auth = getAuth();
+            const user = auth.currentUser;
+            if (!user) return;
+            
+            console.log("[handleAssignDriver] Actualizando lista de pedidos activos...");
+            
+            // Buscar específicamente el pedido que acabamos de actualizar
+            const quoteRef = doc(db, "solicitud", quoteId);
+            const quoteSnap = await getDoc(quoteRef);
+            
+            if (quoteSnap.exists()) {
+              const updatedQuote = {
+                id: quoteId,
+                ...quoteSnap.data(),
+                source: "solicitud"
+              };
+              
+              // Verificar si ya está en la lista de pedidos activos
+              setAcceptedQuotes(currentQuotes => {
+                const exists = currentQuotes.some(q => q.id === quoteId);
+                if (exists) {
+                  return currentQuotes.map(q => q.id === quoteId ? updatedQuote : q);
+                } else {
+                  return [...currentQuotes, updatedQuote];
+                }
+              });
+              
+              console.log("[handleAssignDriver] Pedido activo actualizado con éxito.");
+            }
+          } catch (error) {
+            console.error("Error al actualizar pedidos activos:", error);
+          }
+        };
+        
+        refreshMyQuotes();
       }, 1000);
+      
+      // Usar la nueva función de refrescar pedidos activos
+      setTimeout(() => {
+        refreshActiveOrders();
+        
+        // Verificación adicional: asegurar que el pedido esté en los activos
+        console.log("[handleAssignDriver] Verificación adicional para pedido:", quoteId);
+        
+        const quoteRef = doc(db, "solicitud", quoteId);
+        getDoc(quoteRef).then(snapshot => {
+          if (snapshot.exists()) {
+            const quoteData = snapshot.data();
+            console.log("[handleAssignDriver] Estado actual del pedido:", {
+              id: quoteId,
+              status: quoteData.status,
+              deliveryStatus: quoteData.deliveryStatus,
+              driverId: quoteData.driverId
+            });
+            
+            // Comprobar si ya está en la lista de pedidos activos
+            setAcceptedQuotes(current => {
+              const exists = current.some(q => q.id === quoteId);
+              if (!exists) {
+                console.log("[handleAssignDriver] Agregando pedido a activos manualmente");
+                return [...current, { id: quoteId, ...quoteData }];
+              }
+              return current;
+            });
+          }
+        }).catch(err => {
+          console.error("Error en verificación adicional:", err);
+        });
+      }, 1500);
       
     } catch (error) {
       console.error("Error al asignar repartidor:", error);
@@ -1768,14 +2080,34 @@ const DashboardEmpresas: React.FC = () => {
                     Cotizaciones aprobadas que requieren seguimiento y actualización
                   </CardDescription>
                 </div>
-                <Button
-                  onClick={() => setShowAllActiveOrders(!showAllActiveOrders)}
-                  className="bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white text-xs px-2 py-1 sm:px-3 sm:py-2 rounded-lg shadow-md h-auto"
-                  size="sm"
-                >
-                  {showAllActiveOrders ? "Mostrar menos" : "Ver más"}
-                  <ArrowRight className="ml-1 h-3 w-3" />
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    onClick={refreshActiveOrders}
+                    className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white text-xs px-2 py-1 sm:px-3 sm:py-2 rounded-lg shadow-md h-auto"
+                    size="sm"
+                    disabled={isProcessing}
+                  >
+                    {isProcessing ? (
+                      <div className="flex items-center">
+                        <div className="w-3 h-3 border-2 border-t-white border-l-white border-b-transparent border-r-transparent rounded-full animate-spin mr-1"></div>
+                        <span>Cargando</span>
+                      </div>
+                    ) : (
+                      <>
+                        <RefreshCw className="h-3 w-3 mr-1" />
+                        Actualizar
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    onClick={() => setShowAllActiveOrders(!showAllActiveOrders)}
+                    className="bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white text-xs px-2 py-1 sm:px-3 sm:py-2 rounded-lg shadow-md h-auto"
+                    size="sm"
+                  >
+                    {showAllActiveOrders ? "Mostrar menos" : "Ver más"}
+                    <ArrowRight className="ml-1 h-3 w-3" />
+                  </Button>
+                </div>
               </div>
             </CardHeader>
             <CardContent className="p-0">
@@ -1812,17 +2144,23 @@ const DashboardEmpresas: React.FC = () => {
                                 {quote.title || quote.requestTitle || "Pedido"}
                               </h3>
                               <Badge className={`text-xs px-1.5 py-0.5 rounded-full ${getDeliveryStatusColor(quote.deliveryStatus || 'pendiente')}`}>
-                                {quote.deliveryStatus === 'pendiente' ? 'Pendiente' : 
-                                 quote.deliveryStatus === 'enviado' ? 'Enviado' : 
-                                 quote.deliveryStatus === 'en_camino' ? 'En camino' : 
-                                 quote.deliveryStatus === 'entregado' ? '✅ Entregado' : 
-                                 quote.deliveryStatus === 'pendingDriver' ? 'Esperando repartidor' : 'Pendiente'}
+                                {quote.driverId ? 
+                                  quote.deliveryStatus === 'entregado' ? '✅ Entregado' : 
+                                  '✅ Repartidor asignado' : 
+                                  quote.deliveryStatus === 'pendiente' ? 'Pendiente' : 
+                                  quote.deliveryStatus === 'enviado' ? 'Enviado' : 
+                                  quote.deliveryStatus === 'en_camino' ? 'En camino' : 
+                                  quote.deliveryStatus === 'entregado' ? '✅ Entregado' : 
+                                  quote.deliveryStatus === 'pendingDriver' ? 'Esperando repartidor' : 
+                                  quote.deliveryStatus === 'driverAssigned' ? '✅ Repartidor asignado' : 
+                                  'Pendiente'}
                               </Badge>
                               {quote.deliveryId && !quote.driverId && (!quote.isPublished && !quote.published) && (
                                 <Badge className="bg-red-100 text-red-800 text-xs ml-1">
                                   Sin publicar
                                 </Badge>
                               )}
+                              {/* Ya no necesitamos este badge porque ya tenemos otro que muestra lo mismo arriba */}
                             </div>
                             <p className="text-xs text-gray-500">
                               Cliente: {quote.clientName || quote.userId || "Cliente"}
@@ -2003,65 +2341,117 @@ const DashboardEmpresas: React.FC = () => {
                         </div>
                       ) : null}
                       
-                      {/* Mostrar repartidores interesados si el estado es "pendingDriver" o el pedido está confirmado sin driver asignado */}
-                      {((quote.deliveryStatus === 'pendingDriver' || quote.status === 'pendingDriver' || quote.status === 'confirmado' || quote.estadoEmpresa === 'en_espera') && quote.deliveryId) && (
-                        <div className="mt-3 mb-2 bg-amber-50 p-3 rounded-lg border border-amber-100">
+                      {/* Mostrar el repartidor asignado si existe */}
+                      {quote.driverId ? (
+                        <div className="mt-3 mb-2 bg-green-50 p-3 rounded-lg border border-green-200 shadow-inner">
                           <div className="flex justify-between items-center mb-2">
-                            <h4 className="text-xs font-semibold text-amber-800 flex items-center">
-                              <TruckIcon className="h-3.5 w-3.5 mr-1.5 text-amber-600" />
-                              Esperando Repartidor
+                            <h4 className="text-xs font-semibold text-green-800 flex items-center">
+                              <UserCheck className="h-3.5 w-3.5 mr-1.5 text-green-600" />
+                              Repartidor Asignado
                             </h4>
-                            {/* Se eliminó el badge de viaje publicado ya que ahora es automático */}
+                            <Badge className="bg-green-100 text-green-800 text-xs px-1.5 py-0.5">
+                              ✅ Confirmado
+                            </Badge>
                           </div>
                           
-                          {/* Si hay repartidores interesados, mostrarlos */}
-                          {quote.interestedDrivers && Array.isArray(quote.interestedDrivers) && quote.interestedDrivers.length > 0 ? (
-                            <div>
-                              <p className="text-xs text-amber-700 mb-2">
-                                Los siguientes repartidores están interesados en este pedido:
-                              </p>
-                              <div className="space-y-2">
-                                {quote.interestedDrivers.map((driver, idx) => (
-                                  <div key={idx} className="flex items-center justify-between bg-white p-2 rounded-md border border-amber-200">
-                                    <div className="flex items-center">
-                                      <div className="h-8 w-8 bg-amber-100 rounded-full mr-2 flex items-center justify-center">
-                                        <User className="h-4 w-4 text-amber-600" />
-                                      </div>
-                                      <div>
-                                        <p className="text-xs font-medium">{driver.name}</p>
-                                        <p className="text-xs text-gray-500">{driver.phone || 'Sin teléfono'}</p>
-                                      </div>
-                                    </div>
-                                    <Button
-                                      size="sm"
-                                      className="bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white text-xs px-2 py-1 h-auto rounded-lg shadow-sm"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleAssignDriver(quote.id, driver.id, quote.deliveryId);
-                                      }}
-                                    >
-                                      Asignar
-                                    </Button>
-                                  </div>
-                                ))}
+                          {/* Mostrar la información del repartidor */}
+                          <div className="flex items-center justify-between bg-white p-2.5 rounded-md border border-green-200">
+                            <div className="flex items-center">
+                              <div className="h-9 w-9 bg-green-100 rounded-full mr-2.5 flex items-center justify-center">
+                                <User className="h-5 w-5 text-green-600" />
                               </div>
-                              
-                              {/* Botón eliminado */}
+                              <div>
+                                <p className="text-xs font-medium text-gray-900">{quote.driverName || "Repartidor Asignado"}</p>
+                                <p className="text-xs text-gray-500">{quote.driverPhone || "Contacto en proceso de entrega"}</p>
+                                <div className="flex items-center mt-1">
+                                  <Badge className="bg-green-50 border border-green-200 text-green-700 text-xs px-1.5 py-0.5 mr-1">
+                                    En camino
+                                  </Badge>
+                                  <p className="text-xs text-gray-500">
+                                    {quote.assignedAt ? `Asignado: ${new Date(quote.assignedAt instanceof Date ? quote.assignedAt : 
+                                      typeof quote.assignedAt === 'object' && quote.assignedAt?.toDate ? 
+                                      quote.assignedAt.toDate() : new Date()).toLocaleString('es-MX', {
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                      day: '2-digit',
+                                      month: '2-digit'
+                                    })}` : 'Recién asignado'}
+                                  </p>
+                                </div>
+                              </div>
                             </div>
-                          ) : (
-                            <div>
-                              <p className="text-xs text-amber-700 mb-3">
-                                Aún no hay repartidores interesados en este pedido. El pedido ya está visible para todos los repartidores disponibles.
-                              </p>
-                              {/* Botón borrado */}
-                              {(quote.isPublished || quote.published) && (
-                                <p className="text-xs text-green-700 font-medium">
-                                  Este viaje ya ha sido publicado y está visible para los repartidores.
-                                </p>
-                              )}
-                            </div>
-                          )}
+                            <Button
+                              size="sm"
+                              className="bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white text-xs px-2 py-1 h-auto rounded-lg shadow-sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigate(`/backoffice/order-tracking?id=${quote.id}`);
+                              }}
+                            >
+                              <MapPin className="h-3 w-3 mr-1" />
+                              Seguir
+                            </Button>
+                          </div>
                         </div>
+                      ) : (
+                        /* Mostrar repartidores interesados SOLO si no hay un repartidor asignado */
+                        ((quote.deliveryStatus === 'pendingDriver' || quote.status === 'pendingDriver' || quote.status === 'confirmado' || quote.estadoEmpresa === 'en_espera') && quote.deliveryId) && (
+                          <div className="mt-3 mb-2 bg-amber-50 p-3 rounded-lg border border-amber-100">
+                            <div className="flex justify-between items-center mb-2">
+                              <h4 className="text-xs font-semibold text-amber-800 flex items-center">
+                                <TruckIcon className="h-3.5 w-3.5 mr-1.5 text-amber-600" />
+                                Esperando Repartidor
+                              </h4>
+                              {/* Se eliminó el badge de viaje publicado ya que ahora es automático */}
+                            </div>
+                            
+                            {/* Si hay repartidores interesados, mostrarlos */}
+                            {quote.interestedDrivers && Array.isArray(quote.interestedDrivers) && quote.interestedDrivers.length > 0 ? (
+                              <div>
+                                <p className="text-xs text-amber-700 mb-2">
+                                  Los siguientes repartidores están interesados en este pedido:
+                                </p>
+                                <div className="space-y-2">
+                                  {quote.interestedDrivers.map((driver, idx) => (
+                                    <div key={idx} className="flex items-center justify-between bg-white p-2 rounded-md border border-amber-200">
+                                      <div className="flex items-center">
+                                        <div className="h-8 w-8 bg-amber-100 rounded-full mr-2 flex items-center justify-center">
+                                          <User className="h-4 w-4 text-amber-600" />
+                                        </div>
+                                        <div>
+                                          <p className="text-xs font-medium">{driver.name}</p>
+                                          <p className="text-xs text-gray-500">{driver.phone || 'Sin teléfono'}</p>
+                                        </div>
+                                      </div>
+                                      <Button
+                                        size="sm"
+                                        className="bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white text-xs px-2 py-1 h-auto rounded-lg shadow-sm"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleAssignDriver(quote.id, driver.id, quote.deliveryId);
+                                        }}
+                                      >
+                                        Asignar
+                                      </Button>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : (
+                              <div>
+                                <p className="text-xs text-amber-700 mb-3">
+                                  Aún no hay repartidores interesados en este pedido. El pedido ya está visible para todos los repartidores disponibles.
+                                </p>
+                                {/* Botón borrado */}
+                                {(quote.isPublished || quote.published) && (
+                                  <p className="text-xs text-green-700 font-medium">
+                                    Este viaje ya ha sido publicado y está visible para los repartidores.
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )
                       )}
                       
                       {/* Botones de acción */}

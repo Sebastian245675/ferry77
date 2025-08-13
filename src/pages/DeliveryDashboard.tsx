@@ -306,6 +306,8 @@ const DeliveryDashboard = () => {
             return {
               id: doc.id,
               ...data,
+              // Log all keys for debugging
+              title: data.title || data.name || data.requestName || data.requestTitle || "Solicitud sin título",
               source: 'orders',
               distance: calculateDistance(data),
               
@@ -320,7 +322,23 @@ const DeliveryDashboard = () => {
               businessAddress: data.businessAddress || data.companyAddress || data.storeAddress || '',
               
               // Información del producto
-              productName: data.productName || data.itemName || data.item || 'Producto',
+              productName: (() => {
+                // Access properties safely with index signature
+                const name = data.productName || data['itemName'] || data['item'] || 'Producto';
+                console.log(`Mapping productName for order ${doc.id}: source=${JSON.stringify({productName: data.productName, itemName: data['itemName'], item: data['item']})}, final=${name}`);
+                return name;
+              })(),
+              
+              // Debug titles/names
+              _debugNames: {
+                title: data.title,
+                name: data.name,
+                requestName: data.requestName,
+                requestTitle: data.requestTitle,
+                productName: data.productName,
+                itemName: data.itemName,
+                item: data.item,
+              },
               productDescription: data.productDescription || data.description || data.itemDescription || '',
               productImage: data.productImage || data.itemImage || data.image || '',
               productQuantity: data.quantity || data.productQuantity || '1',
@@ -360,6 +378,8 @@ const DeliveryDashboard = () => {
             return {
               id: doc.id,
               ...data,
+              // Log all keys for debugging
+              title: data.title || data.name || data.requestName || data.requestTitle || "Solicitud sin título",
               // Campos básicos de la entrega
               source: 'deliveries',
               customerName: data.clientName || data.customerName || 'Cliente',
@@ -375,7 +395,23 @@ const DeliveryDashboard = () => {
               businessAddress: data.businessAddress || data.companyAddress || data.storeAddress || '',
               
               // Información del producto
-              productName: data.productName || data.itemName || data.item || 'Producto',
+              productName: (() => {
+                // Access properties safely with index signature
+                const name = data.productName || data['itemName'] || data['item'] || 'Producto';
+                console.log(`Mapping productName for delivery ${doc.id}: source=${JSON.stringify({productName: data.productName, itemName: data['itemName'], item: data['item']})}, final=${name}`);
+                return name;
+              })(),
+              
+              // Debug titles/names
+              _debugNames: {
+                title: data.title,
+                name: data.name,
+                requestName: data.requestName,
+                requestTitle: data.requestTitle,
+                productName: data.productName,
+                itemName: data.itemName,
+                item: data.item,
+              },
               productDescription: data.productDescription || data.description || data.itemDescription || '',
               productImage: data.productImage || data.itemImage || data.image || '',
               productQuantity: data.quantity || data.productQuantity || '1',
@@ -408,9 +444,27 @@ const DeliveryDashboard = () => {
             id: firstDelivery?.id || '',
             source: firstDelivery?.source || '',
             status: firstDelivery?.status || '',
+            // Title-related fields
+            title: firstDelivery?.title || '',
+            name: firstDelivery?.name || '',
+            requestName: firstDelivery?.requestName || '',
+            requestTitle: firstDelivery?.requestTitle || '',
+            titleExists: 'title' in (firstDelivery || {}),
+            nameExists: 'name' in (firstDelivery || {}),
             // Usamos operador de acceso seguro
             companyName: firstDelivery?.companyName || '',
             productName: firstDelivery?.productName || '',
+            productNameType: typeof firstDelivery?.productName,
+            productNameExists: 'productName' in (firstDelivery || {}),
+            allNameFields: {
+              title: firstDelivery?.title,
+              name: firstDelivery?.name,
+              requestName: firstDelivery?.requestName,
+              requestTitle: firstDelivery?.requestTitle,
+              productName: firstDelivery?.productName,
+              itemName: firstDelivery?.itemName,
+              item: firstDelivery?.item
+            },
             productImage: firstDelivery?.productImage || '',
             price: firstDelivery?.offeredPrice || 0,
             deliveryFee: firstDelivery?.deliveryFee || 0,
@@ -418,7 +472,9 @@ const DeliveryDashboard = () => {
             customerName: firstDelivery?.customerName || '',
             clientName: firstDelivery?.clientName || '',
             customer: firstDelivery?.customerName || firstDelivery?.clientName || '',
-            requestedBy: firstDelivery?.requestedBy || ''
+            requestedBy: firstDelivery?.requestedBy || '',
+            // Examining the raw data
+            rawData: firstDelivery
           });
         }
         
@@ -748,13 +804,20 @@ const DeliveryDashboard = () => {
         activeDeliveries: (userData.activeDeliveries || 0) + 1
       });
       
-      // Crear un objeto actualizado para pasar a loadDeliveries
-      const updatedUserData = {
-        ...(userData as Record<string, any>),
-        activeDeliveries: (userData.activeDeliveries || 0) + 1
-      };
-      
-      // Recargar pedidos
+          // Crear un objeto actualizado para pasar a loadDeliveries
+          const updatedUserData = {
+            ...(userData as Record<string, any>),
+            activeDeliveries: (userData.activeDeliveries || 0) + 1
+          };
+          
+          // Añadir check para depurar datos de documentos
+          if (source === 'deliveries') {
+            const deliveryDoc = await getDoc(doc(db, 'deliveries', deliveryId));
+            console.log('DEBUG: Raw delivery data:', deliveryDoc.data());
+          } else {
+            const orderDoc = await getDoc(doc(db, 'orders', deliveryId));
+            console.log('DEBUG: Raw order data:', orderDoc.data());
+          }      // Recargar pedidos
       setActiveTab('active');
       loadDeliveries(updatedUserData);
       
@@ -1003,7 +1066,13 @@ const DeliveryDashboard = () => {
     deliveryRating?: number;
     driverId?: string;
     assignedDelivery?: string;
-    [key: string]: any;  // Permite cualquier otra propiedad que pueda aparecer en los documentos
+    // Campos adicionales que pueden estar en los datos
+    title?: string;
+    name?: string;
+    requestName?: string;
+    requestType?: string;
+    // Permite cualquier otra propiedad que pueda aparecer en los documentos
+    [key: string]: any;
   }
   
   const renderDeliveryCard = (delivery: DeliveryItem) => {
@@ -1014,8 +1083,35 @@ const DeliveryDashboard = () => {
       >
         <div className="flex justify-between items-start">
           <div className="flex-grow">
-            <div className="flex items-center">
-              <h3 className="font-bold text-base text-gray-800">Pedido #{delivery.id.substring(0, 6)}</h3>
+            <div className="flex items-center flex-wrap gap-1">
+              <h3 className="font-bold text-base text-gray-800">
+                {(() => {
+                  // Enhanced approach with comprehensive fallbacks
+                  const displayName = 
+                    delivery.title || 
+                    delivery.name || 
+                    delivery.requestName ||
+                    delivery.requestTitle || 
+                    delivery.productName ||
+                    delivery.itemName ||
+                    delivery.item ||
+                    'Pedido';
+                  
+                  // Debug log to console for troubleshooting
+                  console.log(`Rendering delivery ${delivery.id} with title options:`, {
+                    title: delivery.title,
+                    name: delivery.name,
+                    requestName: delivery.requestName,
+                    requestTitle: delivery.requestTitle,
+                    productName: delivery.productName,
+                    itemName: delivery.itemName,
+                    item: delivery.item,
+                    final: displayName
+                  });
+                    
+                  return `${displayName} (#${delivery.id.substring(0, 6)})`;
+                })()}
+              </h3>
               {delivery.isUrgent && (
                 <span className="ml-2 bg-red-100 text-red-700 text-xs px-1.5 py-0.5 rounded-md font-semibold animate-pulse">
                   Urgente
