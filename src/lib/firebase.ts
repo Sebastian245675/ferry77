@@ -9,7 +9,7 @@ const firebaseConfig = {
   apiKey: "AIzaSyBKj78IBmypAj8F3OkGiLB9Tdhpp_OOrFk",
   authDomain: "ferry-67757.firebaseapp.com",
   projectId: "ferry-67757",
-  storageBucket: "ferry-67757.appspot.com",
+  storageBucket: "ferry-67757.firebasestorage.app", // Cambiado a la URL correcta del bucket
   messagingSenderId: "583953685438",
   appId: "1:583953685438:web:6d8a4d39d9cd40ff8537ef",
   measurementId: "G-TGN3ZNSB59",

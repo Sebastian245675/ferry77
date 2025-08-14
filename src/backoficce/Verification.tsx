@@ -7,6 +7,13 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
+import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from "firebase/storage";
+import { getAuth, onAuthStateChanged } from "firebase/auth";
+import { db, storage } from "../lib/firebase";
+import { uploadFileWithCorsHandling } from "../lib/storageHelpers";
+import { useToast } from "@/hooks/use-toast";
+import { toast } from "@/hooks/use-toast";
 import {
   ShieldCheck,
   Upload,
@@ -18,18 +25,10 @@ import {
   AlertCircle,
   Camera,
   X,
-  Loader2
+  Loader2,
+  File,
+  Trash2
 } from "lucide-react";
-import { toast } from "@/hooks/use-toast";
-import { db, storage } from "../lib/firebase";
-import { doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
-import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from "firebase/storage";
-import { getAuth } from "firebase/auth";
-
-// Obtener el ID de la empresa autenticada
-const auth = getAuth();
-const user = auth.currentUser;
-const companyId = user ? user.uid : null; // ID dinámico del usuario actual
 
 // Tipos para TypeScript
 interface DocumentFile {
@@ -86,9 +85,35 @@ const Verification = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState<{[key: string]: {progress: number, uploading: boolean}}>({});
+  const [companyId, setCompanyId] = useState<string | null>(null);
+  const [authInitialized, setAuthInitialized] = useState(false);
+  
+  // Verificar la autenticación del usuario
+  useEffect(() => {
+    const auth = getAuth();
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setCompanyId(user.uid);
+      } else {
+        setCompanyId(null);
+        // Redirigir a la página de login o mostrar un mensaje
+        toast({
+          title: "No autenticado",
+          description: "Debes iniciar sesión para acceder a esta página",
+          variant: "destructive"
+        });
+      }
+      setAuthInitialized(true);
+    });
+    
+    return () => unsubscribe();
+  }, []);
   
   // Cargar datos de verificación de Firestore
   useEffect(() => {
+    // Solo ejecutar si la autenticación se ha inicializado y tenemos un ID válido
+    if (!authInitialized || !companyId) return;
+    
     const fetchVerification = async () => {
       setLoading(true);
       try {
@@ -118,7 +143,7 @@ const Verification = () => {
 
     };
     fetchVerification();
-  }, []);
+  }, [authInitialized, companyId]);
 
 
 
@@ -215,13 +240,40 @@ const Verification = () => {
   ];
 
 
+  // Remove this import statement as we'll place it at the top of the file
+
   // Subida de archivos a Firebase Storage
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>, docType: string) => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
     
+    // Verificar que el usuario esté autenticado y tengamos un ID válido
+    if (!companyId) {
+      toast({
+        title: "Error",
+        description: "No se pudo subir el archivo. Por favor, inicia sesión nuevamente.",
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    // Validación especial para archivos PDF
+    if (docType === "pdf") {
+      // Verificar que todos los archivos sean PDF
+      const nonPdfFiles = Array.from(files).filter(file => !file.type.includes('pdf'));
+      if (nonPdfFiles.length > 0) {
+        toast({
+          title: "Error",
+          description: "Solo se permiten archivos PDF en esta sección.",
+          variant: "destructive"
+        });
+        return;
+      }
+    }
+    
     // Si es documento requerido, solo permitir un archivo
     if (docType !== "certification" && 
+        docType !== "pdf" && 
         verificationData.uploadedDocs.some(doc => doc.docType === docType)) {
       toast({
         title: "Error",
@@ -242,39 +294,65 @@ const Verification = () => {
         [fileId]: { progress: 0, uploading: true }
       }));
       
-      // Crear referencia en Firebase Storage
       const fileExtension = file.name.split('.').pop();
-      const storageRef = ref(storage, `verification/${companyId}/${docType}/${fileId}.${fileExtension}`);
+      const storagePath = `verification/${companyId}/${docType}/${fileId}.${fileExtension}`;
       
       try {
-        // Iniciar la subida
-        const uploadTask = uploadBytesResumable(storageRef, file);
-        
-        // Monitorear progreso
-        uploadTask.on('state_changed', 
-          (snapshot) => {
-            const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-            setUploadingFiles(prev => ({
-              ...prev,
-              [fileId]: { progress, uploading: true }
-            }));
-          },
-          (error) => {
-            console.error("Error subiendo archivo:", error);
-            setUploadingFiles(prev => {
-              const newState = {...prev};
-              delete newState[fileId];
-              return newState;
-            });
-            toast({
-              title: "Error",
-              description: "No se pudo subir el archivo. Inténtalo nuevamente.",
-              variant: "destructive"
-            });
-          },
-          async () => {
+        // Usar nuestro helper function que maneja errores CORS
+        try {
+          console.log("Iniciando subida con configuración:", {
+            bucket: storage.app.options.storageBucket,
+            path: storagePath,
+            fileSize: file.size,
+            fileType: file.type
+          });
+          
+          const result = await uploadFileWithCorsHandling(
+            file,
+            storagePath,
+            (progress) => {
+              // Actualizar el progreso en el estado
+              setUploadingFiles(prev => ({
+                ...prev,
+                [fileId]: { progress, uploading: true }
+              }));
+              
+              // Mostrar progreso en consola para debug
+              if (progress > 0 && progress % 25 < 1) {
+                console.log(`Progreso de subida: ${Math.round(progress)}%`);
+              }
+            },
+            (error) => {
+              console.error("Error subiendo archivo:", error);
+              console.error("Detalles del error:", {
+                mensaje: error.message,
+                código: (error as any).code, // Conversión segura para acceder a code si existe
+                ruta: storagePath,
+                bucket: storage?.app?.options?.storageBucket || "desconocido"
+              });
+              
+              // Manejar el error
+              setUploadingFiles(prev => {
+                const newState = {...prev};
+                delete newState[fileId];
+                return newState;
+              });
+              
+              // Mostrar mensaje de error más detallado al usuario
+              let errorMsg = "No se pudo subir el archivo.";
+              if (error.message?.includes("CORS")) {
+                errorMsg = "Error de CORS: El servidor no permite subir archivos desde esta ubicación. Por favor, inténtalo más tarde o contacta a soporte técnico.";
+              }
+              
+              toast({
+                title: "Error al subir archivo",
+                description: errorMsg,
+                variant: "destructive"
+              });
+            }
+          ).then(result => {
             // Subida completada exitosamente
-            const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+            const { url, path } = result;
             
             // Crear objeto del documento
             const newDoc: DocumentFile = {
@@ -282,29 +360,54 @@ const Verification = () => {
               name: file.name,
               originalName: file.name,
               type: file.type,
-              url: downloadURL,
-              path: `verification/${companyId}/${docType}/${fileId}.${fileExtension}`,
+              url: url,
+              path: path,
               uploadedAt: Date.now(),
               docType
             };
             
             // Actualizar estado
-            const updatedDocs = [...verificationData.uploadedDocs, newDoc];
-            await saveVerification({ uploadedDocs: updatedDocs });
-            
-            // Limpiar estado de carga
+            return saveVerification({ uploadedDocs: [...verificationData.uploadedDocs, newDoc] }).then(() => {
+              // Limpiar estado de carga
+              setUploadingFiles(prev => {
+                const newState = {...prev};
+                delete newState[fileId];
+                return newState;
+              });
+              
+              toast({
+                title: "Archivo subido",
+                description: `${file.name} fue subido exitosamente`,
+              });
+            });
+          }).catch(e => {
+            console.error("Error inesperado durante la subida:", e);
             setUploadingFiles(prev => {
               const newState = {...prev};
               delete newState[fileId];
               return newState;
             });
-            
             toast({
-              title: "Archivo subido",
-              description: `${file.name} fue subido exitosamente`,
+              title: "Error",
+              description: "Ocurrió un error inesperado al intentar subir el archivo.",
+              variant: "destructive"
             });
-          }
-        );
+          });
+        } catch (e) {
+          console.error("Error crítico iniciando el proceso de subida:", e);
+          setUploadingFiles(prev => {
+            const newState = {...prev};
+            delete newState[fileId];
+            return newState;
+          });
+          toast({
+            title: "Error",
+            description: "Ocurrió un error crítico al preparar la subida del archivo.",
+            variant: "destructive"
+          });
+        }
+        // El código de procesamiento post-subida se ha movido al bloque .then() en la promesa anterior
+        
       } catch (e) {
         console.error("Error iniciando subida:", e);
         setUploadingFiles(prev => {
@@ -345,9 +448,33 @@ const Verification = () => {
       });
     }
   };
+  
+  // Función para eliminar documentos (wrapper de removeDocument)
+  const handleDeleteFile = async (fileId: string) => {
+    const docFile = verificationData.uploadedDocs.find(doc => doc.id === fileId);
+    if (docFile) {
+      await removeDocument(docFile);
+    }
+  };
+  
+  // Función para visualizar documentos
+  const handleViewFile = (url: string, fileType: string) => {
+    // Abre el archivo en una nueva pestaña
+    window.open(url, '_blank');
+  };
 
   // Guardar cambios en Firestore
   const saveVerification = async (changes: Partial<VerificationData>) => {
+    // Verificar que el usuario esté autenticado y tengamos un ID válido
+    if (!companyId) {
+      toast({
+        title: "Error",
+        description: "No se pudo guardar los cambios. Por favor, inicia sesión nuevamente.",
+        variant: "destructive"
+      });
+      return;
+    }
+    
     setSaving(true);
     try {
       const docRef = doc(db, "verificaciones", companyId);
@@ -370,6 +497,15 @@ const Verification = () => {
 
   // Enviar solicitud de verificación final (solo requiere RUT)
   const handleSubmitVerification = async () => {
+    // Verificar que el usuario esté autenticado y tengamos un ID válido
+    if (!companyId) {
+      toast({
+        title: "Error",
+        description: "No se pudo enviar la solicitud. Por favor, inicia sesión nuevamente.",
+        variant: "destructive"
+      });
+      return;
+    }
     // Verificar que el RUT esté cargado
     if (!verificationData.uploadedDocs.some(doc => doc.docType === "taxId")) {
       toast({
@@ -460,6 +596,37 @@ const Verification = () => {
     }
   };
 
+
+  // Si estamos esperando la inicialización de la autenticación o cargando datos
+  if (!authInitialized || loading) {
+    return (
+      <div className="flex justify-center items-center min-h-[70vh]">
+        <div className="text-center space-y-4">
+          <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto" />
+          <p className="text-lg font-medium">Cargando datos...</p>
+        </div>
+      </div>
+    );
+  }
+  
+  // Si no hay un ID de compañía (no autenticado)
+  if (!companyId) {
+    return (
+      <div className="flex justify-center items-center min-h-[70vh]">
+        <div className="max-w-md w-full p-6 bg-white rounded-lg shadow-md space-y-4 text-center">
+          <AlertCircle className="h-16 w-16 text-red-500 mx-auto" />
+          <h2 className="text-2xl font-bold text-gray-900">No autenticado</h2>
+          <p className="text-gray-600">Debes iniciar sesión para acceder a la verificación de empresa.</p>
+          <Button
+            onClick={() => window.location.href = '/auth'}
+            className="company-card text-white"
+          >
+            Iniciar sesión
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
@@ -649,18 +816,21 @@ const Verification = () => {
                       <div className="p-2 bg-blue-50 rounded-full w-fit mx-auto mb-2">
                         <Upload className="h-6 w-6 text-primary" />
                       </div>
-                      <label className="cursor-pointer block">
-                        <input
-                          type="file"
-                          accept=".pdf,.jpg,.jpeg,.png"
-                          onChange={(e) => handleFileUpload(e, "taxId")}
-                          className="hidden"
-                        />
-                        <Button className="mb-2 company-card text-white">
-                          <FileText className="mr-2 h-4 w-4" />
-                          Subir RUT
-                        </Button>
-                      </label>
+                      <input
+                        id="taxId-upload"
+                        type="file"
+                        accept=".pdf,.jpg,.jpeg,.png"
+                        onChange={(e) => handleFileUpload(e, "taxId")}
+                        className="hidden"
+                      />
+                      <Button 
+                        type="button" 
+                        className="mb-2 company-card text-white"
+                        onClick={() => document.getElementById('taxId-upload').click()}
+                      >
+                        <FileText className="mr-2 h-4 w-4" />
+                        Subir RUT
+                      </Button>
                       <p className="text-xs text-gray-500 mt-2">
                         Formatos aceptados: PDF, JPG, PNG
                       </p>
@@ -713,19 +883,22 @@ const Verification = () => {
                     <div className="p-2 bg-blue-50 rounded-full w-fit mx-auto mb-2">
                       <Upload className="h-6 w-6 text-primary" />
                     </div>
-                    <label className="cursor-pointer block">
-                      <input
-                        type="file"
-                        multiple
-                        accept=".pdf,.jpg,.jpeg,.png"
-                        onChange={(e) => handleFileUpload(e, "certification")}
-                        className="hidden"
-                      />
-                      <Button className="mb-2 company-card text-white">
-                        <FileText className="mr-2 h-4 w-4" />
-                        Subir Certificaciones
-                      </Button>
-                    </label>
+                    <input
+                      id="certification-upload"
+                      type="file"
+                      multiple
+                      accept=".pdf,.jpg,.jpeg,.png"
+                      onChange={(e) => handleFileUpload(e, "certification")}
+                      className="hidden"
+                    />
+                    <Button 
+                      type="button" 
+                      className="mb-2 company-card text-white"
+                      onClick={() => document.getElementById('certification-upload').click()}
+                    >
+                      <FileText className="mr-2 h-4 w-4" />
+                      Subir Certificaciones
+                    </Button>
                     <p className="text-xs text-gray-500 mt-2">
                       Puedes subir múltiples certificaciones. Formatos aceptados: PDF, JPG, PNG
                     </p>
@@ -777,23 +950,105 @@ const Verification = () => {
                     <div className="p-2 bg-blue-50 rounded-full w-fit mx-auto mb-2">
                       <Upload className="h-6 w-6 text-primary" />
                     </div>
-                    <label className="cursor-pointer block">
-                      <input
-                        type="file"
-                        multiple
-                        accept=".pdf,.jpg,.jpeg,.png"
-                        onChange={(e) => handleFileUpload(e, "references")}
-                        className="hidden"
-                      />
-                      <Button className="mb-2 company-card text-white">
-                        <FileText className="mr-2 h-4 w-4" />
-                        Subir Referencias
-                      </Button>
-                    </label>
+                    <input
+                      id="references-upload"
+                      type="file"
+                      multiple
+                      accept=".pdf,.jpg,.jpeg,.png"
+                      onChange={(e) => handleFileUpload(e, "references")}
+                      className="hidden"
+                    />
+                    <Button 
+                      type="button" 
+                      className="mb-2 company-card text-white"
+                      onClick={() => document.getElementById('references-upload').click()}
+                    >
+                      <FileText className="mr-2 h-4 w-4" />
+                      Subir Referencias
+                    </Button>
                     <p className="text-xs text-gray-500 mt-2">
                       Puedes subir múltiples cartas de recomendación. Formatos aceptados: PDF, JPG, PNG
                     </p>
                   </div>
+                </div>
+              </div>
+              
+              {/* Documentos PDF */}
+              <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 mt-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h4 className="font-medium text-gray-900">Documentos PDF</h4>
+                    <p className="text-sm text-gray-600">Sube aquí tus documentos en formato PDF</p>
+                  </div>
+                  <Badge variant="outline" className="text-xs bg-blue-50">PDF</Badge>
+                </div>
+                
+                <Alert className="mb-4 bg-blue-50 border-blue-200">
+                  <FileText className="h-4 w-4 text-blue-600" />
+                  <AlertDescription className="text-sm text-blue-700">
+                    Esta sección es exclusiva para documentos PDF. Puedes subir contratos, anexos, documentos legales u otros formatos PDF.
+                  </AlertDescription>
+                </Alert>
+                
+                {verificationData.uploadedDocs.some(doc => doc.docType === "pdf") && (
+                  <div className="bg-blue-50 rounded-lg p-4 mb-4 space-y-3">
+                    {verificationData.uploadedDocs
+                      .filter(doc => doc.docType === "pdf")
+                      .map(doc => (
+                        <div key={doc.id} className="flex items-center justify-between">
+                          <div className="flex items-center space-x-2">
+                            <FileText className="h-5 w-5 text-blue-600" />
+                            <div>
+                              <span className="text-sm font-medium text-gray-900">{doc.originalName}</span>
+                              <p className="text-xs text-gray-500">Subido el {new Date(doc.uploadedAt).toLocaleString()}</p>
+                            </div>
+                          </div>
+                          <div className="flex space-x-2">
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              className="h-8 px-2 text-blue-700 hover:text-blue-800 hover:bg-blue-100"
+                              onClick={() => handleViewFile(doc.url, doc.type)}
+                            >
+                              <FileText className="h-4 w-4 mr-1" /> Ver
+                            </Button>
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              className="h-8 px-2 text-red-700 hover:text-red-800 hover:bg-red-100"
+                              onClick={() => handleDeleteFile(doc.id)}
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )}
+                
+                <div className="text-center">
+                  <div className="p-2 bg-blue-50 rounded-full w-fit mx-auto mb-2">
+                    <FileText className="h-6 w-6 text-primary" />
+                  </div>
+                  <input
+                    id="pdf-upload"
+                    type="file"
+                    multiple
+                    accept=".pdf"
+                    onChange={(e) => handleFileUpload(e, "pdf")}
+                    className="hidden"
+                  />
+                  <Button 
+                    type="button" 
+                    className="mb-2 company-card text-white"
+                    onClick={() => document.getElementById('pdf-upload').click()}
+                  >
+                    <FileText className="mr-2 h-4 w-4" />
+                    Subir Documento PDF
+                  </Button>
+                  <p className="text-xs text-gray-500 mt-2">
+                    Puedes subir múltiples documentos PDF (contratos, anexos, etc.)
+                  </p>
                 </div>
               </div>
               
