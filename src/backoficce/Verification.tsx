@@ -6,7 +6,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+import { doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
+import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from "firebase/storage";
+import { getAuth, onAuthStateChanged } from "firebase/auth";
+import { db, storage } from "../lib/firebase";
+import { uploadFileWithCorsHandling } from "../lib/storageHelpers";
+import { useToast } from "@/hooks/use-toast";
+import { toast } from "@/hooks/use-toast";
 import {
   ShieldCheck,
   Upload,
@@ -18,18 +25,10 @@ import {
   AlertCircle,
   Camera,
   X,
-  Loader2
+  Loader2,
+  File,
+  Trash2
 } from "lucide-react";
-import { toast } from "@/hooks/use-toast";
-import { db, storage } from "../lib/firebase";
-import { doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
-import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from "firebase/storage";
-import { getAuth } from "firebase/auth";
-
-// Obtener el ID de la empresa autenticada
-const auth = getAuth();
-const user = auth.currentUser;
-const companyId = user ? user.uid : null; // ID dinámico del usuario actual
 
 // Tipos para TypeScript
 interface DocumentFile {
@@ -86,39 +85,89 @@ const Verification = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState<{[key: string]: {progress: number, uploading: boolean}}>({});
+  const [companyId, setCompanyId] = useState<string | null>(null);
+  const [authInitialized, setAuthInitialized] = useState(false);
   
-  // Cargar datos de verificación de Firestore
+  // Verificar la autenticación del usuario
   useEffect(() => {
+    const auth = getAuth();
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setCompanyId(user.uid);
+      } else {
+        setCompanyId(null);
+        // Redirigir a la página de login o mostrar un mensaje
+        toast({
+          title: "No autenticado",
+          description: "Debes iniciar sesión para acceder a esta página",
+          variant: "destructive"
+        });
+      }
+      setAuthInitialized(true);
+    });
+    
+    return () => unsubscribe();
+  }, []);
+  
+  // Cargar datos de verificación de Firestore desde la colección users
+  useEffect(() => {
+    // Solo ejecutar si la autenticación se ha inicializado y tenemos un ID válido
+    if (!authInitialized || !companyId) return;
+    
     const fetchVerification = async () => {
       setLoading(true);
       try {
-        const docRef = doc(db, "verificaciones", companyId);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          const data = docSnap.data() as Partial<VerificationData>;
-          setVerificationData({
-            ...defaultVerificationData,
-            ...data,
-            steps: { ...defaultVerificationData.steps, ...(data.steps || {}) },
-            uploadedDocs: (data.uploadedDocs as DocumentFile[]) || []
-          });
-          setCompany({ isVerified: !!data.isVerified });
+        const userDocRef = doc(db, "users", companyId);
+        const userDocSnap = await getDoc(userDocRef);
+        
+        if (userDocSnap.exists()) {
+          const userData = userDocSnap.data();
+          
+          // Si el usuario ya tiene datos de verificación, los cargamos
+          if (userData.verification) {
+            setVerificationData({
+              ...defaultVerificationData,
+              ...userData.verification,
+              steps: { ...defaultVerificationData.steps, ...(userData.verification.steps || {}) },
+              uploadedDocs: (userData.verification.uploadedDocs as DocumentFile[]) || []
+            });
+            
+            // Actualizamos el estado de la empresa según la verificación
+            setCompany({ 
+              ...userData,
+              isVerified: !!userData.verification.isVerified 
+            });
+          } else {
+            // Si no tiene datos de verificación, inicializamos con los valores por defecto
+            // pero no los guardamos en la base de datos aún
+            setVerificationData(defaultVerificationData);
+            setCompany({ 
+              ...userData,
+              isVerified: false 
+            });
+          }
         } else {
-          // Crear documento vacío para este companyId si no existe
-          await setDoc(docRef, defaultVerificationData);
-          setVerificationData(defaultVerificationData);
-          setCompany({ isVerified: false });
+          console.error("El usuario no existe en Firestore");
+          toast({ 
+            title: "Error", 
+            description: "No se encontró información del usuario", 
+            variant: "destructive" 
+          });
         }
       } catch (e) {
         console.error("Error cargando verificación:", e);
-        toast({ title: "Error", description: "No se pudo cargar la verificación", variant: "destructive" });
+        toast({ 
+          title: "Error", 
+          description: "No se pudo cargar la información de verificación", 
+          variant: "destructive" 
+        });
       } finally {
         setLoading(false);
       }
-
     };
+    
     fetchVerification();
-  }, []);
+  }, [authInitialized, companyId]);
 
 
 
@@ -215,13 +264,50 @@ const Verification = () => {
   ];
 
 
+  // Remove this import statement as we'll place it at the top of the file
+
   // Subida de archivos a Firebase Storage
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>, docType: string) => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
     
+    // Verificar que el usuario esté autenticado y tengamos un ID válido
+    if (!companyId) {
+      toast({
+        title: "Error",
+        description: "No se pudo subir el archivo. Por favor, inicia sesión nuevamente.",
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    // Verificar si ya existe una solicitud de verificación enviada
+    if (verificationData.submissionDate) {
+      toast({
+        title: "No permitido",
+        description: "No puedes subir documentos después de enviar una solicitud. La solicitud ya está en revisión.",
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    // Validación especial para archivos PDF
+    if (docType === "pdf") {
+      // Verificar que todos los archivos sean PDF
+      const nonPdfFiles = Array.from(files).filter(file => !file.type.includes('pdf'));
+      if (nonPdfFiles.length > 0) {
+        toast({
+          title: "Error",
+          description: "Solo se permiten archivos PDF en esta sección.",
+          variant: "destructive"
+        });
+        return;
+      }
+    }
+    
     // Si es documento requerido, solo permitir un archivo
     if (docType !== "certification" && 
+        docType !== "pdf" && 
         verificationData.uploadedDocs.some(doc => doc.docType === docType)) {
       toast({
         title: "Error",
@@ -242,39 +328,65 @@ const Verification = () => {
         [fileId]: { progress: 0, uploading: true }
       }));
       
-      // Crear referencia en Firebase Storage
       const fileExtension = file.name.split('.').pop();
-      const storageRef = ref(storage, `verification/${companyId}/${docType}/${fileId}.${fileExtension}`);
+      const storagePath = `verification/${companyId}/${docType}/${fileId}.${fileExtension}`;
       
       try {
-        // Iniciar la subida
-        const uploadTask = uploadBytesResumable(storageRef, file);
-        
-        // Monitorear progreso
-        uploadTask.on('state_changed', 
-          (snapshot) => {
-            const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-            setUploadingFiles(prev => ({
-              ...prev,
-              [fileId]: { progress, uploading: true }
-            }));
-          },
-          (error) => {
-            console.error("Error subiendo archivo:", error);
-            setUploadingFiles(prev => {
-              const newState = {...prev};
-              delete newState[fileId];
-              return newState;
-            });
-            toast({
-              title: "Error",
-              description: "No se pudo subir el archivo. Inténtalo nuevamente.",
-              variant: "destructive"
-            });
-          },
-          async () => {
+        // Usar nuestro helper function que maneja errores CORS
+        try {
+          console.log("Iniciando subida con configuración:", {
+            bucket: storage.app.options.storageBucket,
+            path: storagePath,
+            fileSize: file.size,
+            fileType: file.type
+          });
+          
+          const result = await uploadFileWithCorsHandling(
+            file,
+            storagePath,
+            (progress) => {
+              // Actualizar el progreso en el estado
+              setUploadingFiles(prev => ({
+                ...prev,
+                [fileId]: { progress, uploading: true }
+              }));
+              
+              // Mostrar progreso en consola para debug
+              if (progress > 0 && progress % 25 < 1) {
+                console.log(`Progreso de subida: ${Math.round(progress)}%`);
+              }
+            },
+            (error) => {
+              console.error("Error subiendo archivo:", error);
+              console.error("Detalles del error:", {
+                mensaje: error.message,
+                código: (error as any).code, // Conversión segura para acceder a code si existe
+                ruta: storagePath,
+                bucket: storage?.app?.options?.storageBucket || "desconocido"
+              });
+              
+              // Manejar el error
+              setUploadingFiles(prev => {
+                const newState = {...prev};
+                delete newState[fileId];
+                return newState;
+              });
+              
+              // Mostrar mensaje de error más detallado al usuario
+              let errorMsg = "No se pudo subir el archivo.";
+              if (error.message?.includes("CORS")) {
+                errorMsg = "Error de CORS: El servidor no permite subir archivos desde esta ubicación. Por favor, inténtalo más tarde o contacta a soporte técnico.";
+              }
+              
+              toast({
+                title: "Error al subir archivo",
+                description: errorMsg,
+                variant: "destructive"
+              });
+            }
+          ).then(result => {
             // Subida completada exitosamente
-            const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+            const { url, path } = result;
             
             // Crear objeto del documento
             const newDoc: DocumentFile = {
@@ -282,29 +394,54 @@ const Verification = () => {
               name: file.name,
               originalName: file.name,
               type: file.type,
-              url: downloadURL,
-              path: `verification/${companyId}/${docType}/${fileId}.${fileExtension}`,
+              url: url,
+              path: path,
               uploadedAt: Date.now(),
               docType
             };
             
             // Actualizar estado
-            const updatedDocs = [...verificationData.uploadedDocs, newDoc];
-            await saveVerification({ uploadedDocs: updatedDocs });
-            
-            // Limpiar estado de carga
+            return saveVerification({ uploadedDocs: [...verificationData.uploadedDocs, newDoc] }).then(() => {
+              // Limpiar estado de carga
+              setUploadingFiles(prev => {
+                const newState = {...prev};
+                delete newState[fileId];
+                return newState;
+              });
+              
+              toast({
+                title: "Archivo subido",
+                description: `${file.name} fue subido exitosamente`,
+              });
+            });
+          }).catch(e => {
+            console.error("Error inesperado durante la subida:", e);
             setUploadingFiles(prev => {
               const newState = {...prev};
               delete newState[fileId];
               return newState;
             });
-            
             toast({
-              title: "Archivo subido",
-              description: `${file.name} fue subido exitosamente`,
+              title: "Error",
+              description: "Ocurrió un error inesperado al intentar subir el archivo.",
+              variant: "destructive"
             });
-          }
-        );
+          });
+        } catch (e) {
+          console.error("Error crítico iniciando el proceso de subida:", e);
+          setUploadingFiles(prev => {
+            const newState = {...prev};
+            delete newState[fileId];
+            return newState;
+          });
+          toast({
+            title: "Error",
+            description: "Ocurrió un error crítico al preparar la subida del archivo.",
+            variant: "destructive"
+          });
+        }
+        // El código de procesamiento post-subida se ha movido al bloque .then() en la promesa anterior
+        
       } catch (e) {
         console.error("Error iniciando subida:", e);
         setUploadingFiles(prev => {
@@ -321,17 +458,28 @@ const Verification = () => {
     });
   };
 
-  // Eliminar documento de Storage y Firestore
+  // Eliminar documento de Storage y actualizar el documento de usuario en Firestore
   const removeDocument = async (docFile: DocumentFile) => {
+    // Verificar si ya existe una solicitud de verificación enviada
+    if (verificationData.submissionDate) {
+      toast({
+        title: "No permitido",
+        description: "No puedes eliminar documentos después de enviar una solicitud. La solicitud ya está en revisión.",
+        variant: "destructive"
+      });
+      return;
+    }
+    
     try {
       // Eliminar de Storage
       const fileRef = ref(storage, docFile.path);
       await deleteObject(fileRef);
       
-      // Actualizar Firestore
+      // Actualizar Firestore - eliminar el documento de la lista en el campo verification
       const updatedDocs = verificationData.uploadedDocs.filter(doc => doc.id !== docFile.id);
       await saveVerification({ uploadedDocs: updatedDocs });
       
+      // Mostrar confirmación al usuario
       toast({
         title: "Documento eliminado",
         description: `${docFile.name} fue eliminado exitosamente`,
@@ -345,21 +493,93 @@ const Verification = () => {
       });
     }
   };
+  
+  // Función para eliminar documentos (wrapper de removeDocument)
+  const handleDeleteFile = async (fileId: string) => {
+    const docFile = verificationData.uploadedDocs.find(doc => doc.id === fileId);
+    if (docFile) {
+      await removeDocument(docFile);
+    }
+  };
+  
+  // Función para visualizar documentos
+  const handleViewFile = (url: string, fileType: string) => {
+    // Abre el archivo en una nueva pestaña
+    window.open(url, '_blank');
+  };
 
-  // Guardar cambios en Firestore
+  // Guardar cambios en Firestore en la colección de users
   const saveVerification = async (changes: Partial<VerificationData>) => {
+    // Verificar que el usuario esté autenticado y tengamos un ID válido
+    if (!companyId) {
+      toast({
+        title: "Error",
+        description: "No se pudo guardar los cambios. Por favor, inicia sesión nuevamente.",
+        variant: "destructive"
+      });
+      return;
+    }
+    
     setSaving(true);
     try {
-      const docRef = doc(db, "verificaciones", companyId);
-      const newData = { ...verificationData, ...changes };
-      await setDoc(docRef, newData, { merge: true });
+      const userDocRef = doc(db, "users", companyId);
+      
+      // Log para depuración
+      console.log("Intentando actualizar documento:", userDocRef.path);
+      
+      // Actualizar solo el campo verification dentro del documento del usuario
+      const newVerificationData = { ...verificationData, ...changes };
+      
+      // Preparar los datos para la actualización
+      const updateData = { 
+        verification: newVerificationData,
+        verificationStatus: newVerificationData.isVerified ? "verificado" : "pendiente",
+        verificationLastUpdated: new Date().toISOString()
+      };
+      
+      // Primero comprobamos si el documento existe
+      const docSnap = await getDoc(userDocRef);
+      
+      if (docSnap.exists()) {
+        // Si existe, lo actualizamos normalmente
+        console.log("Documento encontrado, actualizando...");
+        await updateDoc(userDocRef, updateData);
+      } else {
+        // Si no existe, creamos un documento base con setDoc
+        console.log("Documento no encontrado, creando uno nuevo...");
+        await setDoc(userDocRef, {
+          ...updateData,
+          createdAt: new Date().toISOString(),
+          email: '', // Campos obligatorios básicos
+          displayName: '',
+          role: 'company', // Asumimos que es una empresa
+          uid: companyId
+        });
+      }
+      
+      // Actualizar estado local
       setVerificationData(prev => ({ ...prev, ...changes }));
-    } catch (e) {
+      
+      console.log("Verificación guardada correctamente");
+    } catch (e: any) { // Usar any para acceder a propiedades específicas de Firebase
       console.error("Error guardando verificación:", e);
-      toast({ title: "Error", description: "No se pudo guardar los cambios", variant: "destructive" });
+      console.error("Detalles del error:", {
+        mensaje: e.message,
+        código: e.code,
+        documento: `users/${companyId}`
+      });
+      
+      // Mostrar mensaje de error más detallado
+      toast({ 
+        title: "Error al guardar cambios", 
+        description: `${e.message || "No se pudo guardar los cambios"}`, 
+        variant: "destructive" 
+      });
     } finally {
       setSaving(false);
     }
+    
+    return true; // Devolver true para que las promesas encadenadas sepan que se completó correctamente
   };
 
 
@@ -370,6 +590,25 @@ const Verification = () => {
 
   // Enviar solicitud de verificación final (solo requiere RUT)
   const handleSubmitVerification = async () => {
+    // Verificar que el usuario esté autenticado y tengamos un ID válido
+    if (!companyId) {
+      toast({
+        title: "Error",
+        description: "No se pudo enviar la solicitud. Por favor, inicia sesión nuevamente.",
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    // Verificar si ya existe una solicitud de verificación enviada
+    if (verificationData.submissionDate) {
+      toast({
+        title: "Solicitud ya enviada",
+        description: "Ya has enviado una solicitud de verificación. No puedes enviar más solicitudes.",
+        variant: "destructive"
+      });
+      return;
+    }
     // Verificar que el RUT esté cargado
     if (!verificationData.uploadedDocs.some(doc => doc.docType === "taxId")) {
       toast({
@@ -400,37 +639,43 @@ const Verification = () => {
       return;
     }
     
-    // En un entorno real, esto cambiaría el estado a "pendiente de revisión"
-    // y un administrador tendría que aprobar la solicitud
-    await saveVerification({ 
-      submissionDate: Date.now(),
-      steps: {
-        ...verificationData.steps,
-        legal: true,
-        certifications: certificationsComplete,
-        final: true
-      }
-    });
-    
-    // En un entorno de producción real, esto se eliminaría
-    // y el estado de verificación lo cambiaría un administrador
-    setTimeout(async () => {
+    try {
+      // Actualizar datos de verificación con fecha de envío y marcar pasos completados
       await saveVerification({ 
-        isVerified: true,
-        reviewDate: Date.now(),
-        reviewNotes: "Verificación aprobada automáticamente. En producción, esto lo haría un administrador."
+        submissionDate: Date.now(),
+        isVerified: false, // Asegurarse que no está verificado hasta que un admin lo apruebe
+        steps: {
+          ...verificationData.steps,
+          legal: true,
+          certifications: certificationsComplete,
+          final: false // Marcar el paso final como no completado aún
+        }
       });
-      setCompany({ isVerified: true });
+      
+      // También actualizar el estado de verificación a nivel de documento de usuario
+      const userRef = doc(db, "users", companyId);
+      await updateDoc(userRef, {
+        verificationStatus: "pendiente",
+        verificationRequested: true,
+        verificationRequestDate: new Date().toISOString(),
+        verificationDocumentsUploaded: true // Indica que los documentos ya fueron cargados
+      });
+      
+      // Mostrar mensaje al usuario
       toast({
-        title: "¡Verificación Aprobada!",
-        description: "Tu empresa ha sido verificada exitosamente.",
+        title: "Solicitud Enviada",
+        description: "Tu solicitud de verificación ha sido enviada. Un administrador revisará tus documentos en breve.",
+        duration: 5000, // Mostrar por más tiempo para que el usuario lea el mensaje
       });
-    }, 2000); // Simulamos un pequeño retraso
-    
-    toast({
-      title: "Solicitud Enviada",
-      description: "Tu solicitud de verificación está siendo procesada.",
-    });
+      
+    } catch (e) {
+      console.error("Error enviando solicitud de verificación:", e);
+      toast({
+        title: "Error",
+        description: "Hubo un problema al enviar tu solicitud. Por favor, intenta nuevamente.",
+        variant: "destructive"
+      });
+    }
   };
 
 
@@ -446,6 +691,17 @@ const Verification = () => {
         return <AlertCircle className="h-5 w-5 text-gray-400" />;
     }
   };
+  
+  const formatDate = (timestamp: number): string => {
+    const date = new Date(timestamp);
+    return new Intl.DateTimeFormat('es-CO', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    }).format(date);
+  };
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -460,6 +716,37 @@ const Verification = () => {
     }
   };
 
+
+  // Si estamos esperando la inicialización de la autenticación o cargando datos
+  if (!authInitialized || loading) {
+    return (
+      <div className="flex justify-center items-center min-h-[70vh]">
+        <div className="text-center space-y-4">
+          <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto" />
+          <p className="text-lg font-medium">Cargando datos...</p>
+        </div>
+      </div>
+    );
+  }
+  
+  // Si no hay un ID de compañía (no autenticado)
+  if (!companyId) {
+    return (
+      <div className="flex justify-center items-center min-h-[70vh]">
+        <div className="max-w-md w-full p-6 bg-white rounded-lg shadow-md space-y-4 text-center">
+          <AlertCircle className="h-16 w-16 text-red-500 mx-auto" />
+          <h2 className="text-2xl font-bold text-gray-900">No autenticado</h2>
+          <p className="text-gray-600">Debes iniciar sesión para acceder a la verificación de empresa.</p>
+          <Button
+            onClick={() => window.location.href = '/auth'}
+            className="company-card text-white"
+          >
+            Iniciar sesión
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
@@ -487,6 +774,17 @@ const Verification = () => {
           <ShieldCheck className="h-4 w-4" />
           <AlertDescription>
             ¡Felicitaciones! Tu empresa ya está verificada. Los clientes pueden ver tu insignia de verificación.
+          </AlertDescription>
+        </Alert>
+      ) : verificationData.submissionDate ? (
+        <Alert className="rounded-lg shadow-md bg-yellow-50 border-yellow-200">
+          <Clock className="h-4 w-4 text-yellow-600" />
+          <AlertDescription className="text-yellow-800">
+            Tu solicitud de verificación está siendo revisada. Te notificaremos cuando sea aprobada. 
+            Tiempo estimado de revisión: 24-48 horas hábiles.
+            <div className="text-xs mt-1 opacity-75">
+              Fecha de envío: {verificationData.submissionDate && formatDate(verificationData.submissionDate)}
+            </div>
           </AlertDescription>
         </Alert>
       ) : (
@@ -560,7 +858,7 @@ const Verification = () => {
             </div>
 
             {/* Enviar solicitud */}
-            {!company?.isVerified && requiredDocsComplete && (
+            {!company?.isVerified && requiredDocsComplete && !verificationData.submissionDate && (
               <div className="mt-4 flex justify-end">
                 <Button onClick={handleSubmitVerification} disabled={saving || !verificationData.taxId} className="bg-primary text-white hover:bg-primary-dark">
                   {saving ? (
@@ -594,12 +892,22 @@ const Verification = () => {
             </CardHeader>
             <CardContent className="space-y-6">
               {/* Información importante */}
-              <Alert className="mb-6 rounded-lg shadow-md">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>
-                  Para la verificación de tu empresa, solo se requiere el documento RUT. Las certificaciones y referencias comerciales son opcionales.
-                </AlertDescription>
-              </Alert>
+              {verificationData.submissionDate ? (
+                <Alert className="mb-6 rounded-lg shadow-md bg-yellow-50 border-yellow-200">
+                  <Clock className="h-4 w-4 text-yellow-600" />
+                  <AlertTitle>Solicitud en revisión</AlertTitle>
+                  <AlertDescription className="text-yellow-800">
+                    Tu solicitud ya ha sido enviada y está en revisión. No puedes modificar los documentos mientras la solicitud está siendo procesada.
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                <Alert className="mb-6 rounded-lg shadow-md">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>
+                    Para la verificación de tu empresa, solo se requiere el documento RUT. Las certificaciones y referencias comerciales son opcionales.
+                  </AlertDescription>
+                </Alert>
+              )}
 
               {/* File Upload Sections - Responsive */}
               <div className="space-y-6">
@@ -649,18 +957,22 @@ const Verification = () => {
                       <div className="p-2 bg-blue-50 rounded-full w-fit mx-auto mb-2">
                         <Upload className="h-6 w-6 text-primary" />
                       </div>
-                      <label className="cursor-pointer block">
-                        <input
-                          type="file"
-                          accept=".pdf,.jpg,.jpeg,.png"
-                          onChange={(e) => handleFileUpload(e, "taxId")}
-                          className="hidden"
-                        />
-                        <Button className="mb-2 company-card text-white">
-                          <FileText className="mr-2 h-4 w-4" />
-                          Subir RUT
-                        </Button>
-                      </label>
+                      <input
+                        id="taxId-upload"
+                        type="file"
+                        accept=".pdf,.jpg,.jpeg,.png"
+                        onChange={(e) => handleFileUpload(e, "taxId")}
+                        className="hidden"
+                      />
+                      <Button 
+                        type="button" 
+                        className="mb-2 company-card text-white"
+                        onClick={() => document.getElementById('taxId-upload')?.click()}
+                        disabled={verificationData.submissionDate ? true : false}
+                      >
+                        <FileText className="mr-2 h-4 w-4" />
+                        {verificationData.submissionDate ? 'No se puede modificar' : 'Subir RUT'}
+                      </Button>
                       <p className="text-xs text-gray-500 mt-2">
                         Formatos aceptados: PDF, JPG, PNG
                       </p>
@@ -713,19 +1025,23 @@ const Verification = () => {
                     <div className="p-2 bg-blue-50 rounded-full w-fit mx-auto mb-2">
                       <Upload className="h-6 w-6 text-primary" />
                     </div>
-                    <label className="cursor-pointer block">
-                      <input
-                        type="file"
-                        multiple
-                        accept=".pdf,.jpg,.jpeg,.png"
-                        onChange={(e) => handleFileUpload(e, "certification")}
-                        className="hidden"
-                      />
-                      <Button className="mb-2 company-card text-white">
-                        <FileText className="mr-2 h-4 w-4" />
-                        Subir Certificaciones
-                      </Button>
-                    </label>
+                    <input
+                      id="certification-upload"
+                      type="file"
+                      multiple
+                      accept=".pdf,.jpg,.jpeg,.png"
+                      onChange={(e) => handleFileUpload(e, "certification")}
+                      className="hidden"
+                    />
+                    <Button 
+                      type="button" 
+                      className="mb-2 company-card text-white"
+                      onClick={() => document.getElementById('certification-upload')?.click()}
+                      disabled={verificationData.submissionDate ? true : false}
+                    >
+                      <FileText className="mr-2 h-4 w-4" />
+                      {verificationData.submissionDate ? 'No se puede modificar' : 'Subir Certificaciones'}
+                    </Button>
                     <p className="text-xs text-gray-500 mt-2">
                       Puedes subir múltiples certificaciones. Formatos aceptados: PDF, JPG, PNG
                     </p>
@@ -777,23 +1093,107 @@ const Verification = () => {
                     <div className="p-2 bg-blue-50 rounded-full w-fit mx-auto mb-2">
                       <Upload className="h-6 w-6 text-primary" />
                     </div>
-                    <label className="cursor-pointer block">
-                      <input
-                        type="file"
-                        multiple
-                        accept=".pdf,.jpg,.jpeg,.png"
-                        onChange={(e) => handleFileUpload(e, "references")}
-                        className="hidden"
-                      />
-                      <Button className="mb-2 company-card text-white">
-                        <FileText className="mr-2 h-4 w-4" />
-                        Subir Referencias
-                      </Button>
-                    </label>
+                    <input
+                      id="references-upload"
+                      type="file"
+                      multiple
+                      accept=".pdf,.jpg,.jpeg,.png"
+                      onChange={(e) => handleFileUpload(e, "references")}
+                      className="hidden"
+                    />
+                    <Button 
+                      type="button" 
+                      className="mb-2 company-card text-white"
+                      onClick={() => document.getElementById('references-upload')?.click()}
+                      disabled={verificationData.submissionDate ? true : false}
+                    >
+                      <FileText className="mr-2 h-4 w-4" />
+                      {verificationData.submissionDate ? 'No se puede modificar' : 'Subir Referencias'}
+                    </Button>
                     <p className="text-xs text-gray-500 mt-2">
                       Puedes subir múltiples cartas de recomendación. Formatos aceptados: PDF, JPG, PNG
                     </p>
                   </div>
+                </div>
+              </div>
+              
+              {/* Documentos PDF */}
+              <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 mt-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h4 className="font-medium text-gray-900">Documentos PDF</h4>
+                    <p className="text-sm text-gray-600">Sube aquí tus documentos en formato PDF</p>
+                  </div>
+                  <Badge variant="outline" className="text-xs bg-blue-50">PDF</Badge>
+                </div>
+                
+                <Alert className="mb-4 bg-blue-50 border-blue-200">
+                  <FileText className="h-4 w-4 text-blue-600" />
+                  <AlertDescription className="text-sm text-blue-700">
+                    Esta sección es exclusiva para documentos PDF. Puedes subir contratos, anexos, documentos legales u otros formatos PDF.
+                  </AlertDescription>
+                </Alert>
+                
+                {verificationData.uploadedDocs.some(doc => doc.docType === "pdf") && (
+                  <div className="bg-blue-50 rounded-lg p-4 mb-4 space-y-3">
+                    {verificationData.uploadedDocs
+                      .filter(doc => doc.docType === "pdf")
+                      .map(doc => (
+                        <div key={doc.id} className="flex items-center justify-between">
+                          <div className="flex items-center space-x-2">
+                            <FileText className="h-5 w-5 text-blue-600" />
+                            <div>
+                              <span className="text-sm font-medium text-gray-900">{doc.originalName}</span>
+                              <p className="text-xs text-gray-500">Subido el {new Date(doc.uploadedAt).toLocaleString()}</p>
+                            </div>
+                          </div>
+                          <div className="flex space-x-2">
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              className="h-8 px-2 text-blue-700 hover:text-blue-800 hover:bg-blue-100"
+                              onClick={() => handleViewFile(doc.url, doc.type)}
+                            >
+                              <FileText className="h-4 w-4 mr-1" /> Ver
+                            </Button>
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              className="h-8 px-2 text-red-700 hover:text-red-800 hover:bg-red-100"
+                              onClick={() => handleDeleteFile(doc.id)}
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )}
+                
+                <div className="text-center">
+                  <div className="p-2 bg-blue-50 rounded-full w-fit mx-auto mb-2">
+                    <FileText className="h-6 w-6 text-primary" />
+                  </div>
+                  <input
+                    id="pdf-upload"
+                    type="file"
+                    multiple
+                    accept=".pdf"
+                    onChange={(e) => handleFileUpload(e, "pdf")}
+                    className="hidden"
+                  />
+                  <Button 
+                    type="button" 
+                    className="mb-2 company-card text-white"
+                    onClick={() => document.getElementById('pdf-upload')?.click()}
+                    disabled={verificationData.submissionDate ? true : false}
+                  >
+                    <FileText className="mr-2 h-4 w-4" />
+                    {verificationData.submissionDate ? 'No se puede modificar' : 'Subir Documento PDF'}
+                  </Button>
+                  <p className="text-xs text-gray-500 mt-2">
+                    Puedes subir múltiples documentos PDF (contratos, anexos, etc.)
+                  </p>
                 </div>
               </div>
               
@@ -834,6 +1234,7 @@ const Verification = () => {
                         setVerificationData(prev => ({ ...prev, taxId: e.target.value }));
                         saveVerification({ taxId: e.target.value });
                       }}
+                      disabled={verificationData.submissionDate ? true : false}
                     />
                     <p className="text-xs text-gray-500">Ingresa el RUT de tu empresa sin puntos ni guiones</p>
                   </div>
@@ -849,6 +1250,7 @@ const Verification = () => {
                         setVerificationData(prev => ({ ...prev, additionalInfo: e.target.value }));
                         saveVerification({ additionalInfo: e.target.value });
                       }}
+                      disabled={verificationData.submissionDate ? true : false}
                     />
                   </div>
                   
@@ -869,6 +1271,7 @@ const Verification = () => {
                         setVerificationData(prev => ({ ...prev, requestText: e.target.value }));
                         saveVerification({ requestText: e.target.value });
                       }}
+                      disabled={verificationData.submissionDate ? true : false}
                       className="min-h-[120px]"
                     />
                   </div>
@@ -877,14 +1280,28 @@ const Verification = () => {
 
               {/* Final Submission Section */}
               <Card className="mt-6 border-primary/20">
-                <CardHeader className="bg-primary/5">
-                  <CardTitle className="text-xl">Enviar Solicitud de Verificación</CardTitle>
+                <CardHeader className={`${verificationData.submissionDate ? 'bg-yellow-50' : 'bg-primary/5'}`}>
+                  <CardTitle className="text-xl">
+                    {verificationData.submissionDate ? 'Solicitud de Verificación Enviada' : 'Enviar Solicitud de Verificación'}
+                  </CardTitle>
                   <CardDescription>
-                    Una vez que hayas subido todos los documentos requeridos, podrás enviar tu solicitud
+                    {verificationData.submissionDate ? 
+                      `Tu solicitud fue enviada el ${formatDate(verificationData.submissionDate)} y está en revisión` : 
+                      'Una vez que hayas subido todos los documentos requeridos, podrás enviar tu solicitud'}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="pt-4">
                   <div className="space-y-4">
+                    {verificationData.submissionDate && (
+                      <Alert className="bg-yellow-50 border-yellow-200">
+                        <Clock className="h-4 w-4 text-yellow-600" />
+                        <AlertTitle>Solicitud en proceso de revisión</AlertTitle>
+                        <AlertDescription className="text-yellow-800">
+                          Ya has enviado una solicitud de verificación. No es posible enviar solicitudes adicionales mientras una está en revisión. Un administrador revisará tu documentación lo antes posible.
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                    
                     {/* Requirements Checklist - Simplified */}
                     <div className="space-y-2 mb-4">
                       <h4 className="font-semibold text-gray-900">Requisitos para enviar la solicitud:</h4>
@@ -921,17 +1338,18 @@ const Verification = () => {
                     
                     {/* Submit Button */}
                     <div className="flex justify-end">
-                      <Button
-                        onClick={handleSubmitVerification}
-                        className="company-card text-white"
-                        disabled={
-                          saving || 
-                          !requiredDocsComplete || 
-                          !verificationData.taxId || 
-                          !verificationData.requestText || 
-                          verificationData.requestText.length < 20 ||
-                          Object.keys(uploadingFiles).length > 0
-                        }
+                      {!verificationData.submissionDate ? (
+                        <Button
+                          onClick={handleSubmitVerification}
+                          className="company-card text-white"
+                          disabled={
+                            saving || 
+                            !requiredDocsComplete || 
+                            !verificationData.taxId || 
+                            !verificationData.requestText || 
+                            verificationData.requestText.length < 20 ||
+                            Object.keys(uploadingFiles).length > 0
+                          }
                       >
                         {saving ? (
                           <>
@@ -945,6 +1363,12 @@ const Verification = () => {
                           </>
                         )}
                       </Button>
+                      ) : (
+                        <div className="text-sm bg-yellow-50 border border-yellow-200 rounded-md p-3 text-yellow-800 flex items-center">
+                          <Clock className="mr-2 h-4 w-4" />
+                          Ya has enviado una solicitud de verificación el {formatDate(verificationData.submissionDate)}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </CardContent>

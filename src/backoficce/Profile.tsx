@@ -42,7 +42,8 @@ import { toast } from "@/hooks/use-toast";
 import { db, storage } from "../lib/firebase";
 import { doc, getDoc, setDoc, updateDoc, collection, getDocs, query, where } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { ref, uploadBytes, uploadBytesResumable, getDownloadURL } from "firebase/storage";
+import { uploadFileWithCorsHandling } from "../lib/storageHelpers";
 import { generateInventoryManagementToken, getInventoryManagementUrl } from "../lib/inventoryLinkService";
 
 
@@ -680,7 +681,7 @@ const Profile = () => {
       const localPreviewUrl = URL.createObjectURL(file);
       console.log("[UPLOAD] URL de previsualización local creada:", localPreviewUrl);
       
-      // Actualizar estado con previsualización local inmediata
+      // Actualizar estado con previsualización local inmediata para mejorar UX
       setFormData(prev => ({
         ...prev,
         profileImage: localPreviewUrl
@@ -690,7 +691,7 @@ const Profile = () => {
       // Notificación de carga iniciada
       toast({
         title: "Procesando imagen",
-        description: "Mostrando previsualización mientras se procesa...",
+        description: "Subiendo imagen al servidor...",
       });
       
       const auth = getAuth();
@@ -701,207 +702,112 @@ const Profile = () => {
       }
       console.log("[UPLOAD] Usuario autenticado:", user.uid);
       
-      // Crear referencia en Storage
+      // Crear ruta para el archivo en Firebase Storage
       const fileExt = file.name.split('.').pop() || 'jpg';
       const fileName = `profile_${user.uid}_${Date.now()}.${fileExt}`;
       const storagePath = `company_profiles/${user.uid}/${fileName}`;
-      const imageRef = ref(storage, storagePath);
-      console.log("[UPLOAD] Referencia de almacenamiento creada:", storagePath);
-      console.log("[UPLOAD] Bucket de Firebase:", storage.app.options);
+      console.log("[UPLOAD] Ruta de almacenamiento creada:", storagePath);
       
-      // Construir URL directa basada en el bucket de Firebase (plan B por defecto)
-      // Formato correcto para acceder a imágenes en Firebase Storage
-      const directStorageUrl = `https://storage.googleapis.com/ferry-67757.appspot.com/${storagePath}`;
-      console.log("[UPLOAD] URL directa preparada (plan B):", directStorageUrl);
-      
-      // URL alternativa que puede funcionar mejor en algunos casos
-      const altStorageUrl = `https://firebasestorage.googleapis.com/v0/b/ferry-67757.appspot.com/o/${encodeURIComponent(storagePath)}?alt=media`;
-      console.log("[UPLOAD] URL alternativa preparada:", altStorageUrl);
-      
-      // Intentar subir archivo a Firebase Storage
-      let finalImageUrl = directStorageUrl; // Por defecto usamos la URL directa
-      const isLocalhost = window.location.hostname === 'localhost';
+      // Intentar subir la imagen usando el helper con manejo de CORS
+      let imageUrl = "";
       
       try {
-        console.log("[UPLOAD] Intentando método estándar de subida...");
-        console.log("[UPLOAD] Iniciando uploadBytes...");
-        
-        if (isLocalhost) {
-          // En localhost, usamos una estrategia diferente para evitar problemas CORS
-          console.log("[UPLOAD] Detectado entorno localhost, aplicando estrategia local...");
-          
-          // Solución para entorno de desarrollo - En lugar de intentar subir realmente
-          // simulamos una subida exitosa usando la previsualización local
-          console.log("[UPLOAD] En modo desarrollo, usaremos la previsualización local");
-          
-          // Guardamos la URL de la previsualización local en localStorage para persistencia
-          const localFileKey = `temp_profile_${user.uid}`;
-          localStorage.setItem(localFileKey, localPreviewUrl);
-          
-          // Asignamos una URL simulada para el entorno de desarrollo
-          finalImageUrl = localPreviewUrl;
-          
-          // Notificamos al usuario que estamos en modo desarrollo
-          toast({
-            title: "Modo desarrollo detectado",
-            description: "La imagen se muestra como previsualización local. En producción se subirá a Firebase.",
-            duration: 5000
-          });
-          
-          // Simulamos un pequeño delay para mejorar UX
-          await new Promise(resolve => setTimeout(resolve, 800));
-          
-          console.log("[UPLOAD] Previsualización local configurada como imagen de perfil temporal");
-        } else {
-          // En producción, intentamos el método estándar primero
-          try {
-            // Intentar método estándar de subida
-            await uploadBytes(imageRef, file);
-            console.log("[UPLOAD] uploadBytes completado con éxito");
-            
-            // Si tiene éxito, obtener URL de descarga
-            console.log("[UPLOAD] Obteniendo URL de descarga...");
-            const downloadUrl = await getDownloadURL(imageRef);
-            console.log("[UPLOAD] Imagen subida correctamente:", downloadUrl);
-            
-            finalImageUrl = downloadUrl; // Actualizamos con la URL oficial
-          } catch (standardUploadError) {
-            console.error("[UPLOAD] Error en método estándar:", standardUploadError);
-            
-            // Intento alternativo usando un método más directo
-            console.log("[UPLOAD] Intentando método alternativo de subida...");
-            
-            try {
-              // Crear un FormData y subir el archivo directamente mediante fetch
-              const formData = new FormData();
-              formData.append('file', file);
-              
-              // Obtener un token de Firebase Auth para la solicitud
-              const token = await user.getIdToken();
-              
-              // URL del endpoint de subida de Firebase Storage (formato directo)
-              const uploadUrl = `https://storage.googleapis.com/upload/storage/v1/b/ferry-67757.appspot.com/o?name=${encodeURIComponent(storagePath)}`;
-              
-              console.log("[UPLOAD] Intentando subida alternativa a:", uploadUrl);
-              const uploadResponse = await fetch(uploadUrl, {
-                method: 'POST',
-                headers: {
-                  'Authorization': `Bearer ${token}`,
-                  'Content-Type': 'application/octet-stream'
-                },
-                body: file
-              });
-              
-              if (uploadResponse.ok) {
-                console.log("[UPLOAD] Subida alternativa exitosa");
-                // En este caso usamos la URL directa que construimos anteriormente
-              } else {
-                console.log("[UPLOAD] Subida alternativa falló con estado:", uploadResponse.status);
-                // Continuamos con URL directa como último recurso
-              }
-            } catch (alternativeError) {
-              console.error("[UPLOAD] Error en subida alternativa:", alternativeError);
-              console.log("[UPLOAD] Usando URL directa como último recurso");
-            }
+        // Usar el helper de carga con manejo de CORS
+        const uploadResult = await uploadFileWithCorsHandling(
+          file,
+          storagePath,
+          // Callback de progreso
+          (progress) => {
+            console.log(`[UPLOAD] Progreso: ${progress.toFixed(2)}%`);
+          },
+          // Callback de error
+          (error) => {
+            console.error("[UPLOAD] Error durante la subida:", error);
           }
+        );
+        
+        console.log("[UPLOAD] Resultado de la subida:", uploadResult);
+        imageUrl = uploadResult.url;
+        
+        // Método alternativo: subida estándar de Firebase
+        if (!imageUrl) {
+          console.log("[UPLOAD] Intentando método estándar de Firebase");
+          const imageRef = ref(storage, storagePath);
+          await uploadBytes(imageRef, file);
+          console.log("[UPLOAD] Subida estándar completada");
+          
+          // Obtener URL de descarga
+          const downloadUrl = await getDownloadURL(imageRef);
+          console.log("[UPLOAD] URL de descarga obtenida:", downloadUrl);
+          imageUrl = downloadUrl;
         }
       } catch (uploadError) {
-        console.error("[UPLOAD] Error general en el proceso de subida:", uploadError);
-        console.log("[UPLOAD] Continuando con la URL directa por error:", finalImageUrl);
+        console.error("[UPLOAD] Error en la subida principal:", uploadError);
         
-        toast({
-          title: "Advertencia",
-          description: "Hubo un problema al subir la imagen, pero usaremos una URL alternativa.",
-          duration: 5000
-        });
+        // Intento alternativo usando método directo
+        try {
+          console.log("[UPLOAD] Intentando método alternativo de subida...");
+          
+          // Crear un FormData y subir el archivo directamente mediante fetch
+          const formData = new FormData();
+          formData.append('file', file);
+          
+          // Obtener un token de Firebase Auth para la solicitud
+          const token = await user.getIdToken();
+          
+          // URL del endpoint de subida de Firebase Storage (formato directo)
+          const uploadUrl = `https://storage.googleapis.com/upload/storage/v1/b/ferry-67757.appspot.com/o?name=${encodeURIComponent(storagePath)}`;
+          
+          console.log("[UPLOAD] Intentando subida alternativa a:", uploadUrl);
+          const uploadResponse = await fetch(uploadUrl, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/octet-stream'
+            },
+            body: file
+          });
+          
+          if (uploadResponse.ok) {
+            console.log("[UPLOAD] Subida alternativa exitosa");
+            const responseData = await uploadResponse.json();
+            if (responseData && responseData.mediaLink) {
+              imageUrl = responseData.mediaLink;
+            } else {
+              // Construir URL directa como último recurso
+              imageUrl = `https://storage.googleapis.com/ferry-67757.appspot.com/${encodeURIComponent(storagePath)}`;
+            }
+          } else {
+            console.log("[UPLOAD] Subida alternativa falló con estado:", uploadResponse.status);
+            // Construir URL directa como último recurso
+            imageUrl = `https://storage.googleapis.com/ferry-67757.appspot.com/${encodeURIComponent(storagePath)}`;
+          }
+        } catch (alternativeError) {
+          console.error("[UPLOAD] Error en subida alternativa:", alternativeError);
+          // Construir URL directa como último recurso
+          imageUrl = `https://storage.googleapis.com/ferry-67757.appspot.com/${encodeURIComponent(storagePath)}`;
+        }
       }
       
-      // Actualizar el estado con la URL final (ya sea directa o la de Firebase)
+      // Si llegamos aquí y no tenemos URL, usamos la URL directa como último recurso
+      if (!imageUrl) {
+        imageUrl = `https://storage.googleapis.com/ferry-67757.appspot.com/${encodeURIComponent(storagePath)}`;
+        console.log("[UPLOAD] Usando URL directa como último recurso:", imageUrl);
+      }
+      
+      console.log("[UPLOAD] URL final de imagen a usar:", imageUrl);
+      
+      // Actualizar el estado con la URL final
       setFormData(prev => ({
         ...prev,
-        profileImage: finalImageUrl
+        profileImage: imageUrl
       }));
-      console.log("[UPLOAD] Estado actualizado con URL final:", finalImageUrl);
       
+      // Actualizar Firestore
       try {
-        // Verificar si la imagen es accesible (en segundo plano)
-        const checkImageExists = async (url: string) => {
-          try {
-            console.log("[UPLOAD] Verificando si la imagen es accesible...");
-            
-            // Si es una URL local (blob:) no intentamos verificar accesibilidad
-            if (url.startsWith('blob:')) {
-              console.log("[UPLOAD] URL local detectada, omitiendo verificación de accesibilidad");
-              return;
-            }
-            
-            // Para evitar problemas CORS en la verificación, usamos una Image en lugar de fetch
-            const img = new window.Image();
-            let isAccessible = false;
-            
-            // Creamos una promesa para controlar el timeout
-            const imagePromise = new Promise<boolean>((resolve) => {
-              img.onload = () => {
-                console.log("[UPLOAD] La imagen cargó correctamente");
-                resolve(true);
-              };
-              
-              img.onerror = () => {
-                console.log("[UPLOAD] Error al cargar la imagen");
-                resolve(false);
-              };
-              
-              // Intentamos cargar la imagen
-              img.src = url;
-            });
-            
-            // Establecemos un timeout para la verificación
-            const timeoutPromise = new Promise<boolean>((resolve) => {
-              setTimeout(() => resolve(false), 5000); // 5 segundos de timeout
-            });
-            
-            // Verificamos si la imagen se cargó dentro del timeout
-            isAccessible = await Promise.race([imagePromise, timeoutPromise]);
-            
-            if (!isAccessible) {
-              console.log("[UPLOAD] Advertencia: La imagen puede no ser accesible");
-              
-              // Intentar con URL alternativa
-              console.log("[UPLOAD] Intentando con URL alternativa para verificación");
-              
-              if (url === directStorageUrl) {
-                // Si la URL actual es la directa, probamos con la alternativa
-                console.log("[UPLOAD] Cambiando a URL alternativa");
-                setFormData(prev => ({
-                  ...prev,
-                  profileImage: altStorageUrl
-                }));
-                finalImageUrl = altStorageUrl;
-              } else if (!isLocalhost) {
-                // Si no estamos en localhost, mostramos advertencia
-                toast({
-                  title: "Advertencia",
-                  description: "La imagen se ha guardado pero podría no ser accesible inmediatamente. Puede tomar unos minutos hasta que esté disponible.",
-                  duration: 8000
-                });
-              }
-            } else {
-              console.log("[UPLOAD] La imagen es accesible correctamente");
-            }
-          } catch (error) {
-            console.log("[UPLOAD] Error al verificar accesibilidad de la imagen:", error);
-          }
-        };
-        
-        // Iniciar verificación en segundo plano
-        checkImageExists(finalImageUrl);
-        
-        // Conseguimos la URL final de la imagen para guardar en la base de datos
-        const imageUrl = finalImageUrl;
-        console.log("[UPLOAD] URL final de imagen a guardar en Firestore:", imageUrl);
-        
         console.log("[UPLOAD] Iniciando actualización en Firestore...");
-        // Actualizar Firestore - en users
+        
+        // Actualizar users collection
         const userDoc = doc(db, "users", user.uid);
         console.log("[UPLOAD] Actualizando colección users...");
         await setDoc(userDoc, { 
@@ -910,7 +816,7 @@ const Profile = () => {
         }, { merge: true });
         console.log("[UPLOAD] Colección users actualizada");
         
-        // Actualizar empresas collection si existe
+        // Actualizar empresas collection
         const companyDoc = doc(db, "empresas", user.uid);
         console.log("[UPLOAD] Actualizando colección empresas...");
         await setDoc(companyDoc, { 
@@ -919,7 +825,7 @@ const Profile = () => {
         }, { merge: true });
         console.log("[UPLOAD] Colección empresas actualizada");
         
-        // Actualizar la URL en listados collection también
+        // Actualizar listados collection si existe
         const listadoDoc = doc(db, "listados", user.uid);
         console.log("[UPLOAD] Verificando existencia de documento en listados...");
         const listadoSnapshot = await getDoc(listadoDoc);
@@ -932,20 +838,12 @@ const Profile = () => {
         }
         
         // Notificar éxito
-        console.log("[UPLOAD] Proceso completado con éxito");
         toast({
           title: "Imagen actualizada",
           description: "La imagen de perfil ha sido actualizada exitosamente",
         });
       } catch (firestoreError) {
         console.error("[UPLOAD] Error al actualizar Firestore:", firestoreError);
-        console.log("[UPLOAD] Tipo de error:", firestoreError.constructor.name);
-        if (firestoreError.code) {
-          console.log("[UPLOAD] Código de error:", firestoreError.code);
-        }
-        if (firestoreError.message) {
-          console.log("[UPLOAD] Mensaje de error:", firestoreError.message);
-        }
         
         toast({
           title: "Advertencia",
@@ -954,29 +852,8 @@ const Profile = () => {
         });
       }
       
-      // Limpiar el input para permitir seleccionar el mismo archivo de nuevo
-      if (fileInputRef.current) {
-        console.log("[UPLOAD] Limpiando input de archivo");
-        fileInputRef.current.value = '';
-      }
-      
-      // Liberar la URL de objeto local para evitar memory leaks
-      if (localPreviewUrl) {
-        console.log("[UPLOAD] Liberando URL de objeto local");
-        URL.revokeObjectURL(localPreviewUrl);
-      }
     } catch (err: any) {
       console.error("[UPLOAD] Error general al subir imagen:", err);
-      console.log("[UPLOAD] Tipo de error general:", err.constructor.name);
-      if (err.code) {
-        console.log("[UPLOAD] Código de error general:", err.code);
-      }
-      if (err.message) {
-        console.log("[UPLOAD] Mensaje de error general:", err.message);
-      }
-      if (err.stack) {
-        console.log("[UPLOAD] Stack de error:", err.stack);
-      }
       
       // Mensaje de error
       toast({
@@ -984,7 +861,18 @@ const Profile = () => {
         description: "No se pudo subir la imagen. Por favor, intenta nuevamente.",
         variant: "destructive"
       });
+      
     } finally {
+      // Limpiar el input para permitir seleccionar el mismo archivo de nuevo
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+      
+      // Liberar la URL de objeto local para evitar memory leaks
+      if (localPreviewUrl) {
+        URL.revokeObjectURL(localPreviewUrl);
+      }
+      
       console.log("[UPLOAD] Finalizando proceso, reseteando estado de carga");
       setIsUploading(false);
     }

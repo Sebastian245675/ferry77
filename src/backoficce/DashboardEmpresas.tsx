@@ -2423,7 +2423,7 @@ const DashboardEmpresas: React.FC = () => {
                                           <p className="text-xs text-gray-500">{driver.phone || 'Sin teléfono'}</p>
                                         </div>
                                       </div>
-                                      <Button
+                                      <Button 
                                         size="sm"
                                         className="bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white text-xs px-2 py-1 h-auto rounded-lg shadow-sm"
                                         onClick={(e) => {

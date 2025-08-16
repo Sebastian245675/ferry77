@@ -42,6 +42,7 @@ import DeliveryProfile from "./pages/DeliveryProfile";
 import DeliveryPriceProposal from "./pages/DeliveryPriceProposal";
 import UserDeliveryTracking from "./pages/UserDeliveryTracking";
 import CompanyDeliveryTracking from "./pages/CompanyDeliveryTracking";
+import VerificationAdmin from "./pages/admin/VerificationAdmin";
 
   //admin
   import { RequireAdmin } from "@/pages/admin/hooks/useAdminAuth";
@@ -216,6 +217,9 @@ const App = () => {
                 <Route path="/company-panel" element={<DashboardEmpresas />} />
                 <Route path="/order-status" element={<OrderStatus />} />
                 <Route path="/order-tracking" element={<OrderTracking />} />
+
+                {/* Rutas de administración */}
+                <Route path="/admin/verification" element={<VerificationAdmin />} />
 
                 {/* Rutas para repartidores */}
                 <Route path="/delivery-dashboard" element={<DeliveryDashboard />} />
