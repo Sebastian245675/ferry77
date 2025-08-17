@@ -14,6 +14,12 @@ import {
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { FaGoogle, FaFacebookF } from 'react-icons/fa';
 
+import UbicacionButton from '@/components/BotonUbicacion';
+import { ADMIN_EMAIL } from "@/pages/admin/config/adminConfig";
+import { verify } from 'crypto';
+import { s } from 'node_modules/framer-motion/dist/types.d-Bq-Qm38R';
+
+
 const Auth = () => {
   const navigate = useNavigate();
   const [isLogin, setIsLogin] = useState(true);
@@ -38,6 +44,8 @@ const Auth = () => {
     experience: ''
   });
 
+   
+
   // Mostrar mensaje temporal para Facebook login
   function handleSocialClick() {
     setShowSoon(true);
@@ -46,62 +54,68 @@ const Auth = () => {
   
   // Función para manejar el inicio de sesión con Google
   const handleGoogleSignIn = async () => {
-    try {
-      setError(null);
-      setIsLoading(true);
-      const provider = new GoogleAuthProvider();
-      const result = await signInWithPopup(auth, provider);
-      const user = result.user;
-      
-      // Guardar el estado de autenticación
-      localStorage.setItem('userAuthenticated', 'true');
-      localStorage.setItem('userId', user.uid);
-      
-      // Verificar si el usuario ya existe en Firestore
-      const userDoc = await getDoc(doc(db, 'users', user.uid));
-      
-      if (userDoc.exists()) {
-        // El usuario ya existe, verificar si es empresa
-        const userData = userDoc.data();
-        const isEmpresa =
-          userData.type === 'company' ||
-          userData.tipo === 'empresa' ||
-          !!userData.companyName ||
-          !!userData.nick;
-        
-        const isRepartidor = 
-          userData.type === 'deliveryDriver' ||
-          userData.rol === 'repartidor';
-        
-        if (isEmpresa) {
-          window.location.href = '/backoffice';
-        } else if (isRepartidor) {
-          window.location.href = '/delivery-dashboard';
-        } else {
-          window.location.href = '/dashboard';
-        }
-      } else {
-        // Nuevo usuario, crear documento en Firestore
-        await setDoc(doc(db, 'users', user.uid), {
-          uid: user.uid,
-          email: user.email,
-          type: 'user',
-          rol: 'usuario',
-          name: user.displayName || 'Usuario de Google',
-          phone: user.phoneNumber || '',
-          location: '',
-          photoURL: user.photoURL,
-          createdAt: new Date().toISOString()
-        });
-        
-        window.location.href = '/dashboard';
-      }
-    } catch (err: any) {
-      console.error('Error en login con Google:', err);
-      setError(err.message);
-      setIsLoading(false);
+  try {
+    setError(null);
+    setIsLoading(true);
+    const provider = new GoogleAuthProvider();
+    const result = await signInWithPopup(auth, provider);
+    const user = result.user;
+
+    // Guardar el estado de autenticación
+    localStorage.setItem("userAuthenticated", "true");
+    localStorage.setItem("userId", user.uid);
+
+    // 🔹 Verificar si es administrador
+    if (user.email === ADMIN_EMAIL) {
+      window.location.href = "/admin";
+      return; // Evitar que siga evaluando más abajo
     }
-  };
+
+    // Verificar si el usuario ya existe en Firestore
+    const userDoc = await getDoc(doc(db, "users", user.uid));
+
+    if (userDoc.exists()) {
+      // El usuario ya existe, verificar si es empresa o repartidor
+      const userData = userDoc.data();
+      const isEmpresa =
+        userData.type === "company" ||
+        userData.tipo === "empresa" ||
+        !!userData.companyName ||
+        !!userData.nick;
+
+      const isRepartidor =
+        userData.type === "deliveryDriver" ||
+        userData.rol === "repartidor";
+
+      if (isEmpresa) {
+        window.location.href = "/backoffice";
+      } else if (isRepartidor) {
+        window.location.href = "/delivery-dashboard";
+      } else {
+        window.location.href = "/dashboard";
+      }
+    } else {
+      // Nuevo usuario, crear documento en Firestore
+      await setDoc(doc(db, "users", user.uid), {
+        uid: user.uid,
+        email: user.email,
+        type: "user",
+        rol: "usuario",
+        name: user.displayName || "Usuario de Google",
+        phone: user.phoneNumber || "",
+        location: "",
+        photoURL: user.photoURL,
+        createdAt: new Date().toISOString(),
+      });
+
+      window.location.href = "/dashboard";
+    }
+  } catch (err: any) {
+    console.error("Error en login con Google:", err);
+    setError(err.message);
+    setIsLoading(false);
+  }
+};
   
   const [error, setError] = useState<string | null>(null);
 
@@ -168,6 +182,8 @@ const Auth = () => {
             email: formData.email,
             type: 'company',
             rol: 'empresa',
+            status: 'pendiente', // Por defecto, las empresas requieren aprobación
+            banned: false,
             companyName: formData.companyName,
             nick: formData.nick,
             category: formData.category,
@@ -184,6 +200,7 @@ const Auth = () => {
             email: formData.email,
             type: 'deliveryDriver',
             rol: 'repartidor',
+            banned: false,
             name: formData.name,
             phone: formData.phone,
             location: formData.location,
@@ -205,6 +222,8 @@ const Auth = () => {
             email: formData.email,
             type: 'user',
             rol: 'usuario',
+            banned: false,
+            status: 'pendiente', // Por defecto, los usuarios requieren aprobación
             name: formData.name,
             phone: formData.phone,
             location: formData.location,
@@ -318,19 +337,25 @@ const Auth = () => {
                   </div>
                 </div>
                 <div>
-                  <Label htmlFor="location">Ubicación</Label>
-                  <div className="relative mt-1">
-                    <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-                    <Input
-                      id="location"
-                      type="text"
-                      required
-                      className="pl-10 text-gray-900"
-                      placeholder="Ciudad, Provincia"
-                      value={formData.location}
-                      onChange={(e) => setFormData({...formData, location: e.target.value})}
-                    />
-                  </div>
+                <Label htmlFor="location">Ubicación</Label>
+                <div className="flex gap-2 items-center">
+                  <Input
+                    id="location"
+                    type="text"
+                    required
+                    className="text-gray-900 flex-1"
+                    placeholder="Ubicación"
+                    value={formData.location}
+                    onChange={(e) =>
+                      setFormData({ ...formData, location: e.target.value })
+                    }
+                  />
+                  <UbicacionButton
+                    onDireccionObtenida={(direccion) =>
+                      setFormData({ ...formData, location: direccion })
+                    }
+                  />
+                </div>
                 </div>
               </>
             )}
@@ -513,17 +538,27 @@ const Auth = () => {
                   />
                 </div>
                 <div>
-                  <Label htmlFor="location">Ubicación</Label>
+                <Label htmlFor="location">Ubicación</Label>
+                <div className="flex gap-2 items-center">
                   <Input
                     id="location"
                     type="text"
                     required
-                    className="text-gray-900"
+                    className="text-gray-900 flex-1"
                     placeholder="Ubicación"
                     value={formData.location}
-                    onChange={(e) => setFormData({...formData, location: e.target.value})}
+                    onChange={(e) =>
+                      setFormData({ ...formData, location: e.target.value })
+                    }
+                  />
+                  <UbicacionButton
+                    onDireccionObtenida={(direccion) =>
+                      setFormData({ ...formData, location: direccion })
+                    }
                   />
                 </div>
+              </div>
+
               </>
             )}
 
