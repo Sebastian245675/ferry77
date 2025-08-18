@@ -708,139 +708,140 @@ const Profile = () => {
       const storagePath = `company_profiles/${user.uid}/${fileName}`;
       console.log("[UPLOAD] Ruta de almacenamiento creada:", storagePath);
       
-      // Intentar subir la imagen usando el helper con manejo de CORS
-      let imageUrl = "";
+      let finalImageUrl;
       
-      try {
-        // Usar el helper de carga con manejo de CORS
-        const uploadResult = await uploadFileWithCorsHandling(
-          file,
-          storagePath,
-          // Callback de progreso
-          (progress) => {
-            console.log(`[UPLOAD] Progreso: ${progress.toFixed(2)}%`);
-          },
-          // Callback de error
-          (error) => {
-            console.error("[UPLOAD] Error durante la subida:", error);
-          }
-        );
+      // Detectar si estamos en entorno local
+      const isLocalhost = window.location.hostname === 'localhost' || 
+                          window.location.hostname === '127.0.0.1';
+      
+      if (isLocalhost) {
+        console.log("[UPLOAD] Detectado entorno local, usando estrategia de desarrollo");
         
-        console.log("[UPLOAD] Resultado de la subida:", uploadResult);
-        imageUrl = uploadResult.url;
+        // En desarrollo, usamos la URL de previsualización local
+        finalImageUrl = localPreviewUrl;
         
-        // Método alternativo: subida estándar de Firebase
-        if (!imageUrl) {
-          console.log("[UPLOAD] Intentando método estándar de Firebase");
-          const imageRef = ref(storage, storagePath);
-          await uploadBytes(imageRef, file);
-          console.log("[UPLOAD] Subida estándar completada");
-          
-          // Obtener URL de descarga
-          const downloadUrl = await getDownloadURL(imageRef);
-          console.log("[UPLOAD] URL de descarga obtenida:", downloadUrl);
-          imageUrl = downloadUrl;
-        }
-      } catch (uploadError) {
-        console.error("[UPLOAD] Error en la subida principal:", uploadError);
+        // Guardar en localStorage para persistencia en desarrollo
+        const localStorageKey = `profile_image_${user.uid}`;
+        localStorage.setItem(localStorageKey, localPreviewUrl);
         
-        // Intento alternativo usando método directo
+        // Notificar al usuario
+        toast({
+          title: "Modo desarrollo",
+          description: "En desarrollo se usa la previsualización local. En producción se subirá a Firebase.",
+          duration: 5000
+        });
+        
+        // Simular una pequeña demora para mejor UX
+        await new Promise(resolve => setTimeout(resolve, 800));
+      } else {
         try {
-          console.log("[UPLOAD] Intentando método alternativo de subida...");
+          console.log("[UPLOAD] Entorno de producción, subiendo a Firebase Storage");
           
-          // Crear un FormData y subir el archivo directamente mediante fetch
-          const formData = new FormData();
-          formData.append('file', file);
-          
-          // Obtener un token de Firebase Auth para la solicitud
-          const token = await user.getIdToken();
-          
-          // URL del endpoint de subida de Firebase Storage (formato directo)
-          const uploadUrl = `https://storage.googleapis.com/upload/storage/v1/b/ferry-67757.appspot.com/o?name=${encodeURIComponent(storagePath)}`;
-          
-          console.log("[UPLOAD] Intentando subida alternativa a:", uploadUrl);
-          const uploadResponse = await fetch(uploadUrl, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/octet-stream'
+          // Usar el helper de carga con manejo de CORS
+          const uploadResult = await uploadFileWithCorsHandling(
+            file,
+            storagePath,
+            // Callback de progreso
+            (progress) => {
+              console.log(`[UPLOAD] Progreso: ${progress.toFixed(2)}%`);
             },
-            body: file
+            // Callback de error
+            (error) => {
+              console.error("[UPLOAD] Error durante la subida:", error);
+            }
+          );
+          
+          console.log("[UPLOAD] Imagen subida exitosamente:", uploadResult);
+          finalImageUrl = uploadResult.url;
+          
+          // Verificar si la URL es accesible
+          const img = new window.Image();
+          const imageAccessiblePromise = new Promise<boolean>((resolve) => {
+            img.onload = () => {
+              console.log("[UPLOAD] La imagen es accesible");
+              resolve(true);
+            };
+            img.onerror = () => {
+              console.log("[UPLOAD] La imagen podría no ser accesible inmediatamente");
+              resolve(false);
+            };
+            img.src = finalImageUrl;
           });
           
-          if (uploadResponse.ok) {
-            console.log("[UPLOAD] Subida alternativa exitosa");
-            const responseData = await uploadResponse.json();
-            if (responseData && responseData.mediaLink) {
-              imageUrl = responseData.mediaLink;
-            } else {
-              // Construir URL directa como último recurso
-              imageUrl = `https://storage.googleapis.com/ferry-67757.appspot.com/${encodeURIComponent(storagePath)}`;
-            }
-          } else {
-            console.log("[UPLOAD] Subida alternativa falló con estado:", uploadResponse.status);
-            // Construir URL directa como último recurso
-            imageUrl = `https://storage.googleapis.com/ferry-67757.appspot.com/${encodeURIComponent(storagePath)}`;
+          // Dar un tiempo para verificar accesibilidad
+          const isAccessible = await Promise.race([
+            imageAccessiblePromise,
+            new Promise<boolean>(resolve => setTimeout(() => resolve(false), 3000))
+          ]);
+          
+          if (!isAccessible) {
+            console.log("[UPLOAD] Advertencia: La imagen puede tardar en estar disponible");
+            toast({
+              title: "Información",
+              description: "La imagen puede tardar unos minutos en estar visible en todos los dispositivos.",
+              duration: 5000
+            });
           }
-        } catch (alternativeError) {
-          console.error("[UPLOAD] Error en subida alternativa:", alternativeError);
-          // Construir URL directa como último recurso
-          imageUrl = `https://storage.googleapis.com/ferry-67757.appspot.com/${encodeURIComponent(storagePath)}`;
+        } catch (error) {
+          console.error("[UPLOAD] Error subiendo la imagen:", error);
+          
+          // Usar la previsualización local como respaldo
+          finalImageUrl = localPreviewUrl;
+          
+          toast({
+            title: "Advertencia",
+            description: "Hubo un problema al subir la imagen. Se usará una versión temporal.",
+            duration: 5000
+          });
         }
       }
-      
-      // Si llegamos aquí y no tenemos URL, usamos la URL directa como último recurso
-      if (!imageUrl) {
-        imageUrl = `https://storage.googleapis.com/ferry-67757.appspot.com/${encodeURIComponent(storagePath)}`;
-        console.log("[UPLOAD] Usando URL directa como último recurso:", imageUrl);
-      }
-      
-      console.log("[UPLOAD] URL final de imagen a usar:", imageUrl);
       
       // Actualizar el estado con la URL final
       setFormData(prev => ({
         ...prev,
-        profileImage: imageUrl
+        profileImage: finalImageUrl
       }));
+      console.log("[UPLOAD] Estado actualizado con URL final:", finalImageUrl);
       
-      // Actualizar Firestore
+      // Actualizar en Firestore
       try {
         console.log("[UPLOAD] Iniciando actualización en Firestore...");
-        
-        // Actualizar users collection
+        // Actualizar Firestore - en users
         const userDoc = doc(db, "users", user.uid);
         console.log("[UPLOAD] Actualizando colección users...");
         await setDoc(userDoc, { 
-          profileImage: imageUrl,
+          profileImage: finalImageUrl,
           updatedAt: new Date().toISOString() 
         }, { merge: true });
         console.log("[UPLOAD] Colección users actualizada");
         
-        // Actualizar empresas collection
+        // Actualizar empresas collection si existe
         const companyDoc = doc(db, "empresas", user.uid);
         console.log("[UPLOAD] Actualizando colección empresas...");
         await setDoc(companyDoc, { 
-          profileImage: imageUrl,
+          profileImage: finalImageUrl,
           updatedAt: new Date().toISOString() 
         }, { merge: true });
         console.log("[UPLOAD] Colección empresas actualizada");
         
-        // Actualizar listados collection si existe
+        // Actualizar la URL en listados collection también
         const listadoDoc = doc(db, "listados", user.uid);
         console.log("[UPLOAD] Verificando existencia de documento en listados...");
         const listadoSnapshot = await getDoc(listadoDoc);
         if (listadoSnapshot.exists()) {
           console.log("[UPLOAD] Documento en listados encontrado, actualizando companyLogo...");
-          await updateDoc(listadoDoc, { companyLogo: imageUrl });
+          await updateDoc(listadoDoc, { companyLogo: finalImageUrl });
           console.log("[UPLOAD] companyLogo actualizado en listados");
         } else {
           console.log("[UPLOAD] Documento en listados no existe, se omite la actualización");
         }
         
         // Notificar éxito
+        console.log("[UPLOAD] Proceso completado con éxito");
         toast({
-          title: "Imagen actualizada",
-          description: "La imagen de perfil ha sido actualizada exitosamente",
+          title: "¡Imagen actualizada!",
+          description: "La imagen de perfil se ha actualizado correctamente.",
+          duration: 3000
         });
       } catch (firestoreError) {
         console.error("[UPLOAD] Error al actualizar Firestore:", firestoreError);
@@ -852,29 +853,34 @@ const Profile = () => {
         });
       }
       
-    } catch (err: any) {
-      console.error("[UPLOAD] Error general al subir imagen:", err);
-      
-      // Mensaje de error
-      toast({
-        title: "Error al subir imagen",
-        description: "No se pudo subir la imagen. Por favor, intenta nuevamente.",
-        variant: "destructive"
-      });
-      
-    } finally {
       // Limpiar el input para permitir seleccionar el mismo archivo de nuevo
       if (fileInputRef.current) {
+        console.log("[UPLOAD] Limpiando input de archivo");
         fileInputRef.current.value = '';
       }
       
       // Liberar la URL de objeto local para evitar memory leaks
       if (localPreviewUrl) {
+        console.log("[UPLOAD] Liberando URL de objeto local");
         URL.revokeObjectURL(localPreviewUrl);
       }
       
-      console.log("[UPLOAD] Finalizando proceso, reseteando estado de carga");
+      // Desactivar estado de carga
       setIsUploading(false);
+      
+      return finalImageUrl;
+    } catch (err) {
+      console.error("[UPLOAD] Error general en la subida:", err);
+      setIsUploading(false);
+      
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Hubo un problema al procesar la imagen",
+        variant: "destructive",
+        duration: 5000
+      });
+      
+      return null;
     }
   };
 

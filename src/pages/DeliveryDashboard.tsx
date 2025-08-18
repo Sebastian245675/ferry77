@@ -804,29 +804,37 @@ const DeliveryDashboard = () => {
         activeDeliveries: (userData.activeDeliveries || 0) + 1
       });
       
-          // Crear un objeto actualizado para pasar a loadDeliveries
-          const updatedUserData = {
-            ...(userData as Record<string, any>),
-            activeDeliveries: (userData.activeDeliveries || 0) + 1
-          };
+      // Crear un objeto actualizado para pasar a loadDeliveries
+      const updatedUserData = {
+        ...(userData as Record<string, any>),
+        activeDeliveries: (userData.activeDeliveries || 0) + 1
+      };
           
-          // Añadir check para depurar datos de documentos
-          if (source === 'deliveries') {
-            const deliveryDoc = await getDoc(doc(db, 'deliveries', deliveryId));
-            console.log('DEBUG: Raw delivery data:', deliveryDoc.data());
-          } else {
-            const orderDoc = await getDoc(doc(db, 'orders', deliveryId));
-            console.log('DEBUG: Raw order data:', orderDoc.data());
-          }      // Recargar pedidos
-      setActiveTab('active');
+      // Añadir check para depurar datos de documentos
+      if (source === 'deliveries') {
+        const deliveryDoc = await getDoc(doc(db, 'deliveries', deliveryId));
+        console.log('DEBUG: Raw delivery data:', deliveryDoc.data());
+      } else {
+        const orderDoc = await getDoc(doc(db, 'orders', deliveryId));
+        console.log('DEBUG: Raw order data:', orderDoc.data());
+      }
+      
+      // Recargar pedidos en segundo plano
       loadDeliveries(updatedUserData);
       
       // Mostrar confirmación al usuario
       toast({
         title: "Entrega aceptada",
-        description: "Has aceptado la entrega correctamente. Revisa los detalles para comenzar.",
+        description: "Has aceptado la entrega correctamente. Redirigiendo a Mis Entregas...",
         variant: "default",
       });
+      
+      // NUEVO: Redirigir a la página de "Mis Entregas" después de aceptar
+      // Pequeña espera para que se muestre el toast antes de redirigir
+      setTimeout(() => {
+        navigate('/delivery-active');
+      }, 1000);
+      
     } catch (error) {
       console.error('Error al aceptar pedido:', error);
       toast({

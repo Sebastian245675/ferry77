@@ -23,7 +23,8 @@ import {
   Menu,
   X,
   Building2,
-  CreditCard
+  CreditCard,
+  LifeBuoy
 } from "lucide-react";
 import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
 import { db } from "../lib/firebase";
@@ -143,6 +144,7 @@ const logout = async () => {
     { to: "/backoffice/reviews", icon: Star, label: "Reseñas y Comentarios", shortLabel: "Reseñas" },
     { to: "/backoffice/pagos", icon: CreditCard, label: "Pagos", shortLabel: "Pagos" },
     { to: "/backoffice/verification", icon: ShieldCheck, label: "Verificación", shortLabel: "Verificación" },
+    { to: "/backoffice/help", icon: LifeBuoy, label: "Solicitar Ayuda", shortLabel: "Ayuda" },
   ];
 
   return (

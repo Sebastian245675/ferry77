@@ -260,10 +260,34 @@ const DeliveryDetails = () => {
       if (newStatus === 'inDelivery' && !delivery.assignedAt) {
         updates.assignedAt = new Date().toISOString();
         updates.assignedDelivery = auth.currentUser.uid;
+        
+        // Actualizar datos del repartidor - incrementar entregas activas
+        if (userData) {
+          const userRef = doc(db, 'users', auth.currentUser.uid);
+          await updateDoc(userRef, {
+            activeDeliveries: (userData.activeDeliveries || 0) + 1,
+          });
+        }
+        
+        // Mostrar toast y redirigir a Mis Entregas cuando se acepta una entrega
+        toast({
+          title: "Entrega aceptada",
+          description: "Has aceptado la entrega correctamente. Redirigiendo a Mis Entregas...",
+        });
+        
+        await updateDoc(deliveryRef, updates);
+        
+        // Redirigir a la página de Mis Entregas después de un breve retraso
+        setTimeout(() => {
+          navigate('/delivery-active');
+        }, 1000);
+        
+        return; // Salimos de la función para evitar el loadDeliveryData
+        
       } else if (newStatus === 'delivered') {
         updates.deliveredAt = new Date().toISOString();
         
-        // Actualizar datos del repartidor
+        // Actualizar datos del repartidor - decrementar entregas activas, incrementar entregas totales
         if (userData) {
           const userRef = doc(db, 'users', auth.currentUser.uid);
           await updateDoc(userRef, {
@@ -277,6 +301,11 @@ const DeliveryDetails = () => {
       await loadDeliveryData();
     } catch (error) {
       console.error('Error al actualizar estado:', error);
+      toast({
+        title: "Error",
+        description: "No se pudo actualizar el estado de la entrega. Por favor intenta nuevamente.",
+        variant: "destructive",
+      });
     } finally {
       setUpdatingStatus(false);
     }

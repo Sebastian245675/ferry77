@@ -37,6 +37,7 @@ import Pagos from "./backoficce/Pagos";
 import InventoryManager from "./pages/InventoryManager";
 import DeliveryDashboard from "./pages/DeliveryDashboard";
 import DeliveryDetails from "./pages/DeliveryDetails";
+import DeliveryActive from "./pages/DeliveryActive";
 import DeliveryHistory from "./pages/DeliveryHistory";
 import DeliveryProfile from "./pages/DeliveryProfile";
 import DeliveryPriceProposal from "./pages/DeliveryPriceProposal";
@@ -224,6 +225,7 @@ const App = () => {
                 {/* Rutas para repartidores */}
                 <Route path="/delivery-dashboard" element={<DeliveryDashboard />} />
                 <Route path="/delivery-details/:id" element={<DeliveryDetails />} />
+                <Route path="/delivery-active" element={<DeliveryActive />} />
                 <Route path="/delivery-history" element={<DeliveryHistory />} />
                 <Route path="/delivery-profile" element={<DeliveryProfile />} />
                 <Route path="/delivery-propose-fee/:id" element={<DeliveryPriceProposal />} />
