@@ -71,8 +71,8 @@ const Help = () => {
     },
     {
       id: '6',
-      question: '¿Cómo recargo saldo en mi cuenta?',
-      answer: 'Ve a la sección "Mi Saldo" desde el menú principal. Puedes recargar usando tarjeta de crédito, débito, transferencia bancaria o billeteras digitales.',
+      question: '¿Cómo realizo los pagos?',
+      answer: 'Los pagos se realizan directamente con las empresas cuando aceptas una cotización. Puedes elegir entre pago contra entrega, transferencia bancaria o tarjeta de crédito según lo que ofrezca cada empresa.',
       category: 'Pagos'
     }
   ];
@@ -120,7 +120,7 @@ const Help = () => {
     } else if (lowerMessage.includes('puntos') || lowerMessage.includes('recompensas')) {
       return 'Ganas puntos con cada pedido completado. Puedes canjearlos por descuentos y beneficios en la sección "Recompensas". ¡Cada peso gastado te da puntos!';
     } else if (lowerMessage.includes('pago') || lowerMessage.includes('saldo')) {
-      return 'Puedes recargar tu saldo desde "Mi Saldo". Aceptamos tarjetas, transferencias y billeteras digitales. También puedes pagar contra entrega en algunos casos.';
+      return 'Los pagos se realizan directamente con las empresas cuando aceptas sus cotizaciones. Aceptamos diferentes métodos de pago según cada empresa: tarjetas, transferencias y pago contra entrega.';
     } else if (lowerMessage.includes('empresa') || lowerMessage.includes('segur')) {
       return 'Todas nuestras empresas están verificadas. Puedes ver su puntuación de seguridad, certificaciones y reseñas de otros usuarios en su perfil.';
     } else {

@@ -372,6 +372,8 @@ const NewRequest = () => {
   const [showQuoteModal, setShowQuoteModal] = useState(false);
   const [bestQuotes, setBestQuotes] = useState([]);
   const [requestId, setRequestId] = useState(null);
+  // Estado para manejar la selección de empresas para cada producto
+  const [selectedOptions, setSelectedOptions] = useState({});
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
@@ -978,7 +980,20 @@ const NewRequest = () => {
                                   className={`flex items-center rounded-lg border p-2 transition-all cursor-pointer shadow-sm ${isSelected ? 'border-blue-600 bg-blue-50 ring-2 ring-blue-200' : 'border-gray-200 hover:border-blue-300 bg-white'}`}
                                   onClick={() => {
                                     // Cambiar la opción seleccionada para este producto
-                                    setBestQuotes(prev => prev.map((q, qidx) => qidx === idx ? { ...q, selectedOptionIndex: oidx } : q));
+                                    setBestQuotes(prev => {
+                                      const updatedQuotes = [...prev];
+                                      updatedQuotes[idx] = { 
+                                        ...prev[idx], 
+                                        selectedOptionIndex: oidx,
+                                        // Actualizar la mejor opción con la seleccionada actualmente
+                                        bestCompany: opt.companyId,
+                                        bestCompanyName: opt.companyName,
+                                        bestCompanyLogo: opt.companyLogo,
+                                        bestPrice: opt.price,
+                                        bestProduct: opt
+                                      };
+                                      return updatedQuotes;
+                                    });
                                   }}
                                 >
                                   {/* Imagen producto */}

@@ -4,28 +4,53 @@ import { Eye, EyeOff, Mail, Lock, User, Phone, MapPin } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { auth, db } from '../lib/firebase';
+import { auth } from '../lib/firebase';
 import { 
   createUserWithEmailAndPassword, 
   signInWithEmailAndPassword,
   GoogleAuthProvider,
   signInWithPopup
 } from 'firebase/auth';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { FaGoogle, FaFacebookF } from 'react-icons/fa';
 
-import UbicacionButton from '@/components/BotonUbicacion';
 import { ADMIN_EMAIL } from "@/pages/admin/config/adminConfig";
-import { verify } from 'crypto';
-import { s } from 'node_modules/framer-motion/dist/types.d-Bq-Qm38R';
 
 
 const Auth = () => {
   const navigate = useNavigate();
+  
+  // Lista de ciudades principales de Colombia
+  const ciudadesColombia = [
+    'Bogotá D.C.',
+    'Medellín',
+    'Cali',
+    'Barranquilla',
+    'Cartagena',
+    'Cúcuta',
+    'Bucaramanga',
+    'Pereira',
+    'Santa Marta',
+    'Ibagué',
+    'Manizales',
+    'Villavicencio',
+    'Pasto',
+    'Montería',
+    'Valledupar',
+    'Neiva',
+    'Armenia',
+    'Popayán',
+    'Sincelejo',
+    'Tunja',
+    'Florencia',
+    'Riohacha',
+    'Yopal',
+    'Quibdó',
+    'Mocoa'
+  ];
+  
   const [isLogin, setIsLogin] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
   const [isCompany, setIsCompany] = useState(false);
-  const [isDeliveryDriver, setIsDeliveryDriver] = useState(false);
   const [showSoon, setShowSoon] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [formData, setFormData] = useState({
@@ -37,11 +62,7 @@ const Auth = () => {
     companyName: '',
     nick: '',
     category: '',
-    description: '',
-    vehicleType: '',
-    licenseNumber: '',
-    availability: '',
-    experience: ''
+    description: ''
   });
 
    
@@ -65,49 +86,48 @@ const Auth = () => {
     localStorage.setItem("userAuthenticated", "true");
     localStorage.setItem("userId", user.uid);
 
-    // 🔹 Verificar si es administrador
+    // Verificar si es administrador
     if (user.email === ADMIN_EMAIL) {
       window.location.href = "/admin";
-      return; // Evitar que siga evaluando más abajo
+      return;
     }
 
-    // Verificar si el usuario ya existe en Firestore
-    const userDoc = await getDoc(doc(db, "users", user.uid));
-
-    if (userDoc.exists()) {
-      // El usuario ya existe, verificar si es empresa o repartidor
-      const userData = userDoc.data();
-      const isEmpresa =
-        userData.type === "company" ||
-        userData.tipo === "empresa" ||
-        !!userData.companyName ||
-        !!userData.nick;
-
-      const isRepartidor =
-        userData.type === "deliveryDriver" ||
-        userData.rol === "repartidor";
-
-      if (isEmpresa) {
-        window.location.href = "/backoffice";
-      } else if (isRepartidor) {
-        window.location.href = "/delivery-dashboard";
+    // Verificar si el usuario ya existe en el backend
+    try {
+      const response = await fetch(`http://localhost:8090/api/usuarios/firebase/${user.uid}`);
+      
+      if (response.ok) {
+        // Usuario existe, obtener sus datos
+        const userData = await response.json();
+        
+        // Redirigir según el tipo de usuario
+        if (userData.userType === 'empresa') {
+          window.location.href = "/backoffice";
+        } else {
+          window.location.href = "/dashboard";
+        }
       } else {
+        // Usuario no existe, crearlo en el backend
+        const newUserData = {
+          firebaseUid: user.uid,
+          nombreCompleto: user.displayName || "Usuario de Google",
+          email: user.email,
+          telefono: user.phoneNumber || "",
+          ciudad: "",
+          userType: 'cliente'
+        };
+
+        await fetch('http://localhost:8090/api/usuarios', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(newUserData)
+        });
+
         window.location.href = "/dashboard";
       }
-    } else {
-      // Nuevo usuario, crear documento en Firestore
-      await setDoc(doc(db, "users", user.uid), {
-        uid: user.uid,
-        email: user.email,
-        type: "user",
-        rol: "usuario",
-        name: user.displayName || "Usuario de Google",
-        phone: user.phoneNumber || "",
-        location: "",
-        photoURL: user.photoURL,
-        createdAt: new Date().toISOString(),
-      });
-
+    } catch (backendError) {
+      console.error('Error conectando con backend:', backendError);
+      // Si hay error con el backend, redirigir como usuario normal
       window.location.href = "/dashboard";
     }
   } catch (err: any) {
@@ -131,24 +151,26 @@ const Auth = () => {
         const userCredential = await signInWithEmailAndPassword(auth, formData.email, formData.password);
         localStorage.setItem('userAuthenticated', 'true');
         localStorage.setItem('userId', userCredential.user.uid);
-        // Detectar si es empresa
-        const userDoc = await getDoc(doc(db, 'users', userCredential.user.uid));
-        const userData = userDoc.exists() ? userDoc.data() : {};
-        const isEmpresa =
-          userData.type === 'company' ||
-          userData.tipo === 'empresa' ||
-          !!userData.companyName ||
-          !!userData.nick;
         
-        const isRepartidor = 
-          userData.type === 'deliveryDriver' ||
-          userData.rol === 'repartidor';
+        // Detectar tipo de usuario desde el backend
+        try {
+          const response = await fetch(`http://localhost:8090/api/usuarios/firebase/${userCredential.user.uid}`);
           
-        if (isEmpresa) {
-          window.location.href = '/backoffice';
-        } else if (isRepartidor) {
-          window.location.href = '/delivery-dashboard';
-        } else {
+          if (response.ok) {
+            const userData = await response.json();
+            
+            if (userData.userType === 'empresa') {
+              window.location.href = '/backoffice';
+            } else {
+              window.location.href = '/dashboard';
+            }
+          } else {
+            // Si no existe en backend, redirigir como usuario normal
+            window.location.href = '/dashboard';
+          }
+        } catch (backendError) {
+          console.error('Error consultando backend:', backendError);
+          // En caso de error, redirigir como usuario normal
           window.location.href = '/dashboard';
         }
       } else {
@@ -157,11 +179,6 @@ const Auth = () => {
         if (isCompany) {
           if (!formData.companyName || !formData.nick || !formData.category || !formData.description || !formData.phone || !formData.location) {
             setError('Por favor completa todos los campos de empresa.');
-            return;
-          }
-        } else if (isDeliveryDriver) {
-          if (!formData.name || !formData.phone || !formData.location || !formData.vehicleType || !formData.licenseNumber || !formData.availability || !formData.experience) {
-            setError('Por favor completa todos los campos de repartidor.');
             return;
           }
         } else {
@@ -174,62 +191,53 @@ const Auth = () => {
         localStorage.setItem('userAuthenticated', 'true');
         localStorage.setItem('userId', userCredential.user.uid);
 
-        // Guardar datos en Firestore según tipo de cuenta
+        // Guardar datos según tipo de cuenta
         if (isCompany) {
-          // Empresa
-          await setDoc(doc(db, 'users', userCredential.user.uid), {
-            uid: userCredential.user.uid,
-            email: formData.email,
-            type: 'company',
-            rol: 'empresa',
-            status: 'pendiente', // Por defecto, las empresas requieren aprobación
-            banned: false,
-            companyName: formData.companyName,
-            nick: formData.nick,
-            category: formData.category,
-            description: formData.description,
-            phone: formData.phone,
-            location: formData.location,
-            createdAt: new Date().toISOString()
-          });
-          window.location.href = '/backoffice';
-        } else if (isDeliveryDriver) {
-          // Repartidor
-          await setDoc(doc(db, 'users', userCredential.user.uid), {
-            uid: userCredential.user.uid,
-            email: formData.email,
-            type: 'deliveryDriver',
-            rol: 'repartidor',
-            banned: false,
-            name: formData.name,
-            phone: formData.phone,
-            location: formData.location,
-            vehicleType: formData.vehicleType,
-            licenseNumber: formData.licenseNumber,
-            availability: formData.availability,
-            experience: formData.experience,
-            createdAt: new Date().toISOString(),
-            status: 'pendiente', // Por defecto, los repartidores requieren aprobación
-            activeDeliveries: 0,
-            totalDeliveries: 0,
-            rating: 0
-          });
-          window.location.href = '/delivery-dashboard';
+          // Empresa - solo guardar en backend MySQL
+          try {
+            await fetch('http://localhost:8090/api/usuarios', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                firebaseUid: userCredential.user.uid,
+                nombreCompleto: formData.companyName,
+                email: formData.email,
+                telefono: formData.phone,
+                ciudad: formData.location,
+                userType: 'empresa',
+                companyName: formData.companyName,
+                nick: formData.nick,
+                category: formData.category,
+                description: formData.description
+              })
+            });
+            window.location.href = '/backoffice';
+          } catch (backendError) {
+            console.error('Error guardando en backend:', backendError);
+            setError('Error al guardar los datos. Inténtalo de nuevo.');
+            return;
+          }
         } else {
-          // Usuario normal
-          await setDoc(doc(db, 'users', userCredential.user.uid), {
-            uid: userCredential.user.uid,
-            email: formData.email,
-            type: 'user',
-            rol: 'usuario',
-            banned: false,
-            status: 'pendiente', // Por defecto, los usuarios requieren aprobación
-            name: formData.name,
-            phone: formData.phone,
-            location: formData.location,
-            createdAt: new Date().toISOString()
-          });
-          window.location.href = '/dashboard';
+          // Usuario normal - solo guardar en backend MySQL
+          try {
+            await fetch('http://localhost:8090/api/usuarios', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                firebaseUid: userCredential.user.uid,
+                nombreCompleto: formData.name,
+                email: formData.email,
+                telefono: formData.phone,
+                ciudad: formData.location,
+                userType: 'cliente'
+              })
+            });
+            window.location.href = '/dashboard';
+          } catch (backendError) {
+            console.error('Error guardando en backend:', backendError);
+            setError('Error al guardar los datos. Inténtalo de nuevo.');
+            return;
+          }
         }
       }
     } catch (err: any) {
@@ -271,10 +279,9 @@ const Auth = () => {
             <div className="mb-4 flex flex-wrap justify-center gap-2">
               <button
                 type="button"
-                className={`px-4 py-2 rounded-lg font-semibold transition ${!isCompany && !isDeliveryDriver ? "bg-blue-600 text-white shadow" : "bg-gray-100 text-blue-700"}`}
+                className={`px-4 py-2 rounded-lg font-semibold transition ${!isCompany ? "bg-blue-600 text-white shadow" : "bg-gray-100 text-blue-700"}`}
                 onClick={() => {
                   setIsCompany(false);
-                  setIsDeliveryDriver(false);
                 }}
               >
                 Soy usuario
@@ -284,27 +291,16 @@ const Auth = () => {
                 className={`px-4 py-2 rounded-lg font-semibold transition ${isCompany ? "bg-blue-600 text-white shadow" : "bg-gray-100 text-blue-700"}`}
                 onClick={() => {
                   setIsCompany(true);
-                  setIsDeliveryDriver(false);
                 }}
               >
                 Soy empresa
-              </button>
-              <button
-                type="button"
-                className={`px-4 py-2 rounded-lg font-semibold transition ${isDeliveryDriver ? "bg-blue-600 text-white shadow" : "bg-gray-100 text-blue-700"}`}
-                onClick={() => {
-                  setIsDeliveryDriver(true);
-                  setIsCompany(false);
-                }}
-              >
-                Soy repartidor
               </button>
             </div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Registro usuario */}
-            {!isLogin && !isCompany && !isDeliveryDriver && (
+            {!isLogin && !isCompany && (
               <>
                 <div>
                   <Label htmlFor="name">Nombre Completo</Label>
@@ -338,131 +334,20 @@ const Auth = () => {
                 </div>
                 <div>
                 <Label htmlFor="location">Ubicación</Label>
-                <div className="flex gap-2 items-center">
-                  <Input
-                    id="location"
-                    type="text"
-                    required
-                    className="text-gray-900 flex-1"
-                    placeholder="Ubicación"
-                    value={formData.location}
-                    onChange={(e) =>
-                      setFormData({ ...formData, location: e.target.value })
-                    }
-                  />
-                  <UbicacionButton
-                    onDireccionObtenida={(direccion) =>
-                      setFormData({ ...formData, location: direccion })
-                    }
-                  />
-                </div>
-                </div>
-              </>
-            )}
-            
-            {/* Registro repartidor */}
-            {!isLogin && isDeliveryDriver && (
-              <>
-                <div>
-                  <Label htmlFor="name">Nombre Completo</Label>
-                  <div className="relative mt-1">
-                    <User className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-                    <Input
-                      id="name"
-                      type="text"
-                      required
-                      className="pl-10 text-gray-900"
-                      placeholder="Tu nombre completo"
-                      value={formData.name}
-                      onChange={(e) => setFormData({...formData, name: e.target.value})}
-                    />
-                  </div>
-                </div>
-                <div>
-                  <Label htmlFor="phone">Teléfono</Label>
-                  <div className="relative mt-1">
-                    <Phone className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-                    <Input
-                      id="phone"
-                      type="tel"
-                      required
-                      className="pl-10 text-gray-900"
-                      placeholder="+54 11 1234-5678"
-                      value={formData.phone}
-                      onChange={(e) => setFormData({...formData, phone: e.target.value})}
-                    />
-                  </div>
-                </div>
-                <div>
-                  <Label htmlFor="location">Ubicación</Label>
-                  <div className="relative mt-1">
-                    <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-                    <Input
-                      id="location"
-                      type="text"
-                      required
-                      className="pl-10 text-gray-900"
-                      placeholder="Ciudad, Provincia"
-                      value={formData.location}
-                      onChange={(e) => setFormData({...formData, location: e.target.value})}
-                    />
-                  </div>
-                </div>
-                <div>
-                  <Label htmlFor="vehicleType">Tipo de Vehículo</Label>
-                  <select
-                    id="vehicleType"
-                    required
-                    className="w-full border border-gray-300 rounded-lg p-3 text-gray-900"
-                    value={formData.vehicleType}
-                    onChange={(e) => setFormData({...formData, vehicleType: e.target.value})}
-                  >
-                    <option value="">Selecciona un tipo de vehículo</option>
-                    <option value="Motocicleta">Motocicleta</option>
-                    <option value="Automóvil">Automóvil</option>
-                    <option value="Bicicleta">Bicicleta</option>
-                    <option value="Camioneta">Camioneta</option>
-                    <option value="Furgón">Furgón</option>
-                  </select>
-                </div>
-                <div>
-                  <Label htmlFor="licenseNumber">Número de Licencia</Label>
-                  <Input
-                    id="licenseNumber"
-                    type="text"
-                    required
-                    className="text-gray-900"
-                    placeholder="Número de licencia de conducir"
-                    value={formData.licenseNumber}
-                    onChange={(e) => setFormData({...formData, licenseNumber: e.target.value})}
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="availability">Disponibilidad</Label>
-                  <select
-                    id="availability"
-                    required
-                    className="w-full border border-gray-300 rounded-lg p-3 text-gray-900"
-                    value={formData.availability}
-                    onChange={(e) => setFormData({...formData, availability: e.target.value})}
-                  >
-                    <option value="">Selecciona tu disponibilidad</option>
-                    <option value="Tiempo completo">Tiempo completo</option>
-                    <option value="Medio tiempo">Medio tiempo</option>
-                    <option value="Fines de semana">Fines de semana</option>
-                    <option value="Horario flexible">Horario flexible</option>
-                  </select>
-                </div>
-                <div>
-                  <Label htmlFor="experience">Experiencia como Repartidor</Label>
-                  <textarea
-                    id="experience"
-                    required
-                    className="w-full border border-gray-300 rounded-lg p-3 text-gray-900"
-                    placeholder="Describe tu experiencia previa como repartidor (si tienes)"
-                    value={formData.experience}
-                    onChange={(e) => setFormData({...formData, experience: e.target.value})}
-                  />
+                <select
+                  id="location"
+                  required
+                  className="w-full border border-gray-300 rounded-lg p-3 text-gray-900"
+                  value={formData.location}
+                  onChange={(e) => setFormData({ ...formData, location: e.target.value })}
+                >
+                  <option value="">Selecciona tu ciudad</option>
+                  {ciudadesColombia.map((ciudad) => (
+                    <option key={ciudad} value={ciudad}>
+                      {ciudad}
+                    </option>
+                  ))}
+                </select>
                 </div>
               </>
             )}
@@ -539,24 +424,20 @@ const Auth = () => {
                 </div>
                 <div>
                 <Label htmlFor="location">Ubicación</Label>
-                <div className="flex gap-2 items-center">
-                  <Input
-                    id="location"
-                    type="text"
-                    required
-                    className="text-gray-900 flex-1"
-                    placeholder="Ubicación"
-                    value={formData.location}
-                    onChange={(e) =>
-                      setFormData({ ...formData, location: e.target.value })
-                    }
-                  />
-                  <UbicacionButton
-                    onDireccionObtenida={(direccion) =>
-                      setFormData({ ...formData, location: direccion })
-                    }
-                  />
-                </div>
+                <select
+                  id="location"
+                  required
+                  className="w-full border border-gray-300 rounded-lg p-3 text-gray-900"
+                  value={formData.location}
+                  onChange={(e) => setFormData({ ...formData, location: e.target.value })}
+                >
+                  <option value="">Selecciona tu ciudad</option>
+                  {ciudadesColombia.map((ciudad) => (
+                    <option key={ciudad} value={ciudad}>
+                      {ciudad}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               </>

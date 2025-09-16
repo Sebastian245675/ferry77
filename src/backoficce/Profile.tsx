@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import PerformanceChart, { MonthlyPerformanceData } from "@/components/PerformanceChart";
 import {
   User,
   Mail,
@@ -216,6 +217,13 @@ const Profile = () => {
     clients: 0,
     years: 0
   });
+  
+  // Estado para los datos de rendimiento mensual
+  const [monthlyPerformance, setMonthlyPerformance] = useState<MonthlyPerformanceData>({
+    months: [],
+    quotes: [],
+    ratings: []
+  });
 
   // Cargar productos de la empresa
   useEffect(() => {
@@ -330,28 +338,174 @@ const Profile = () => {
         const quotesSnapshot = await getDocs(quotesQuery);
         completedJobs = quotesSnapshot.size;
 
-        // Si quieres mostrar más avanzado: contar por mes, etc.
-        // Ejemplo: trabajos completados por mes
-        // const jobsByMonth: Record<string, number> = {};
-        // quotesSnapshot.forEach(doc => {
-        //   const data = doc.data();
-        //   const date = data.deliveredAt ? new Date(data.deliveredAt) : null;
-        //   if (date) {
-        //     const key = `${date.getFullYear()}-${date.getMonth(;)+1}`;
-        //     jobsByMonth[key] = (jobsByMonth[key] || 0) + 1
-        //   }
-        // });
+        // Obtener datos para el gráfico de rendimiento mensual
+        console.log("Iniciando cálculo de rendimiento mensual...");
+        const last6Months = getLastMonths(6);
+        console.log("Últimos 6 meses:", last6Months);
+        
+        const monthLabels = last6Months.map(date => {
+          const monthName = new Date(date + "-01").toLocaleDateString('es', { month: 'short' });
+          return monthName.charAt(0).toUpperCase() + monthName.slice(1);
+        });
+        console.log("Etiquetas de meses:", monthLabels);
+        
+        // Contamos cotizaciones por mes
+        const jobsByMonth: Record<string, number> = {};
+        const ratingsByMonth: Record<string, { sum: number; count: number }> = {};
+        
+        // Inicializamos los meses para asegurar que tenemos datos para cada uno
+        last6Months.forEach(monthKey => {
+          jobsByMonth[monthKey] = 0;
+          ratingsByMonth[monthKey] = { sum: 0, count: 0 };
+        });
+        
+        // Ahora utilizaremos datos reales en lugar de datos de demostración
+        const hasDemoData = false; // Cambiado a false para usar datos reales de Firebase
+        if (hasDemoData) {
+          console.log("Usando datos de demostración para el gráfico...");
+          last6Months.forEach((month, index) => {
+            // Simular de 3 a 15 cotizaciones por mes con tendencia creciente
+            const baseQuotes = 3 + index * 2;
+            const randomQuotes = Math.floor(Math.random() * 5);
+            jobsByMonth[month] = baseQuotes + randomQuotes;
+            
+            // Simular calificaciones entre 3.5 y 5.0 con tendencia creciente
+            const baseRating = 3.5 + (index * 0.3);
+            const randomRating = Math.random() * 0.5;
+            ratingsByMonth[month] = { 
+              sum: baseRating + randomRating, 
+              count: 1 
+            };
+          });
+          
+          console.log("Datos de demostración generados:", { jobsByMonth, ratingsByMonth });
+        } else {
+          // Obtenemos todas las cotizaciones de los últimos 6 meses
+          console.log("Buscando datos reales de cotizaciones...");
+          
+          // Creamos una fecha para consultar los últimos 6 meses
+          const lastDate = new Date();
+          lastDate.setMonth(lastDate.getMonth() - 6);
+          console.log("Fecha de inicio para consulta:", lastDate.toISOString());
+          
+          // Primero intentamos consultar sin filtro de fecha para asegurarnos de que hay datos
+          // Después podemos refinar con el filtro de fecha
+          const allQuotesQuery = query(
+            collection(db, "cotizaciones"),
+            where("companyId", "==", companyId)
+            // No usamos filtro de fecha inicialmente para verificar si hay datos
+          );
+          
+          console.log("Ejecutando consulta de cotizaciones...");
+          const allQuotesSnapshot = await getDocs(allQuotesQuery);
+          console.log("Cotizaciones encontradas en total:", allQuotesSnapshot.size);
+          
+          allQuotesSnapshot.forEach(doc => {
+            const data = doc.data();
+            console.log("Procesando cotización:", doc.id, data);
+            
+            // Fecha de creación para cotizaciones
+            if (data.createdAt) {
+              console.log("Fecha de creación encontrada:", data.createdAt);
+              let date;
+              if (data.createdAt.seconds) {
+                date = new Date(data.createdAt.seconds * 1000);
+                console.log("Fecha convertida desde timestamp:", date);
+              } else if (data.createdAt.toDate) {
+                date = data.createdAt.toDate();
+                console.log("Fecha convertida con toDate():", date);
+              } else {
+                date = new Date(data.createdAt);
+                console.log("Fecha convertida desde string/número:", date);
+              }
+              
+              const monthKey = getMonthKey(date);
+              console.log("Clave de mes calculada:", monthKey);
+              
+              if (jobsByMonth[monthKey] !== undefined) {
+                jobsByMonth[monthKey]++;
+                console.log(`Incrementando conteo para ${monthKey} a ${jobsByMonth[monthKey]}`);
+              } else {
+                console.log(`Mes ${monthKey} no está en los últimos 6 meses, ignorando`);
+              }
+            } else {
+              console.log("Cotización sin fecha de creación:", doc.id);
+            }
+            
+            // Calificaciones
+            if (data.rating && data.ratingDate) {
+              console.log("Calificación encontrada:", data.rating, "fecha:", data.ratingDate);
+              let date;
+              if (data.ratingDate.seconds) {
+                date = new Date(data.ratingDate.seconds * 1000);
+              } else if (data.ratingDate.toDate) {
+                date = data.ratingDate.toDate();
+              } else {
+                date = new Date(data.ratingDate);
+              }
+              
+              const monthKey = getMonthKey(date);
+              if (ratingsByMonth[monthKey] !== undefined) {
+                ratingsByMonth[monthKey].sum += data.rating;
+                ratingsByMonth[monthKey].count++;
+                console.log(`Agregando calificación ${data.rating} para ${monthKey}`);
+              }
+            }
+          });
+          
+          console.log("Datos reales procesados:", { jobsByMonth, ratingsByMonth });
+        }
+        
+        // Convertimos los datos a arrays para el gráfico
+        const quoteValues = last6Months.map(month => jobsByMonth[month] || 0);
+        const ratingValues = last6Months.map(month => {
+          const monthData = ratingsByMonth[month];
+          return monthData.count > 0 ? parseFloat((monthData.sum / monthData.count).toFixed(1)) : 0;
+        });
+        
+        console.log("Valores finales para el gráfico:", {
+          months: monthLabels,
+          quotes: quoteValues,
+          ratings: ratingValues
+        });
 
+        // Actualizamos los estados
         setStats({
           completedJobs,
           rating,
           clients,
           years
         });
+        
+        setMonthlyPerformance({
+          months: monthLabels,
+          quotes: quoteValues,
+          ratings: ratingValues
+        });
       } catch (err) {
         console.error("Error cargando estadísticas de empresa:", err);
       }
     };
+    
+    // Función auxiliar para obtener los últimos N meses como strings 'YYYY-MM'
+    const getLastMonths = (count: number): string[] => {
+      const months = [];
+      const today = new Date();
+      
+      for (let i = count - 1; i >= 0; i--) {
+        const date = new Date(today);
+        date.setMonth(today.getMonth() - i);
+        months.push(getMonthKey(date));
+      }
+      
+      return months;
+    };
+    
+    // Función auxiliar para convertir una fecha a formato 'YYYY-MM'
+    const getMonthKey = (date: Date): string => {
+      return `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}`;
+    };
+    
     fetchStats();
   }, []);
 
@@ -673,12 +827,15 @@ const Profile = () => {
       return;
     }
     
+    // Variable para almacenar la URL de previsualización
+    let localPreviewUrl = '';
+    
     try {
       setIsUploading(true);
       console.log("[UPLOAD] Estado de carga activado");
       
       // Crear una URL local para previsualización inmediata
-      const localPreviewUrl = URL.createObjectURL(file);
+      localPreviewUrl = URL.createObjectURL(file);
       console.log("[UPLOAD] URL de previsualización local creada:", localPreviewUrl);
       
       // Actualizar estado con previsualización local inmediata para mejorar UX
@@ -1778,7 +1935,7 @@ const Profile = () => {
               </Card>
             </div>
 
-            {/* Performance Chart Placeholder */}
+            {/* Performance Chart - Implementación real */}
             <Card className="glass-effect">
               <CardHeader>
                 <CardTitle className="text-lg sm:text-xl">Rendimiento Mensual</CardTitle>
@@ -1786,8 +1943,8 @@ const Profile = () => {
                   Estadísticas de tus trabajos y calificaciones
                 </CardDescription>
               </CardHeader>
-              <CardContent className="h-48 sm:h-64 flex items-center justify-center">
-                <p className="text-gray-500 text-sm">Gráfico de rendimiento - próximamente</p>
+              <CardContent className="h-56 sm:h-72">
+                <PerformanceChart stats={monthlyPerformance} />
               </CardContent>
             </Card>
           </TabsContent>

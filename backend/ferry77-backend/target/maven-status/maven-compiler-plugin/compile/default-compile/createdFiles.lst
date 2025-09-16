@@ -1,0 +1,17 @@
+com\ferry77\backend\validation\ValidUserType.class
+com\ferry77\backend\config\SecurityConfig.class
+com\ferry77\backend\model\PreRegistro.class
+com\ferry77\backend\dto\QuoteResponse.class
+com\ferry77\backend\validation\UserTypeValidator.class
+com\ferry77\backend\Ferry77BackendApplication.class
+com\ferry77\backend\repository\PreRegistroRepository.class
+com\ferry77\backend\model\Usuario.class
+com\ferry77\backend\controller\MockDataController.class
+com\ferry77\backend\repository\UsuarioRepository.class
+com\ferry77\backend\service\EmailService.class
+com\ferry77\backend\service\MockDataService.class
+com\ferry77\backend\config\CorsConfig$1.class
+com\ferry77\backend\config\CorsConfig.class
+com\ferry77\backend\config\MailConfig.class
+com\ferry77\backend\controller\PreRegistroController.class
+com\ferry77\backend\controller\UsuarioController.class

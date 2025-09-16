@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { MessageSquare, Send, ArrowLeft, MoreVertical, Phone, Video, Search, ChevronLeft, Plus, Store, UserPlus } from 'lucide-react';
+import { MessageSquare, Send, ArrowLeft, MoreVertical, Phone, Video, Search, ChevronLeft, Plus, Store, UserPlus, X, CheckCircle } from 'lucide-react';
 import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
 import { messageService } from '../lib/messageService';
 import { Conversation, Message } from '../lib/models';
 import { getAuth, onAuthStateChanged } from 'firebase/auth';
 import { formatDistanceToNow, format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { collection, query, where, getDocs, getFirestore, doc, getDoc } from 'firebase/firestore';
+import { collection, query as firestoreQuery, where, getDocs, getFirestore, doc, getDoc } from 'firebase/firestore';
 import BottomNavigation from './BottomNavigation';
 
 const MessageCenter = () => {
@@ -356,8 +357,8 @@ const MessageCenter = () => {
           
           // Buscar en 'companies' por uid o userId
           const companiesRef = collection(db, 'companies');
-          const companiesQueryUID = query(companiesRef, where('uid', '==', id));
-          const companiesQueryUserID = query(companiesRef, where('userId', '==', id));
+          const companiesQueryUID = firestoreQuery(companiesRef, where('uid', '==', id));
+          const companiesQueryUserID = firestoreQuery(companiesRef, where('userId', '==', id));
           
           const [companiesSnapshotUID, companiesSnapshotUserID] = await Promise.all([
             getDocs(companiesQueryUID),
@@ -375,8 +376,8 @@ const MessageCenter = () => {
           } else {
             // Buscar en 'empresas' por uid o userId
             const empresasRef = collection(db, 'empresas');
-            const empresasQueryUID = query(empresasRef, where('uid', '==', id));
-            const empresasQueryUserID = query(empresasRef, where('userId', '==', id));
+            const empresasQueryUID = firestoreQuery(empresasRef, where('uid', '==', id));
+            const empresasQueryUserID = firestoreQuery(empresasRef, where('userId', '==', id));
             
             const [empresasSnapshotUID, empresasSnapshotUserID] = await Promise.all([
               getDocs(empresasQueryUID),
@@ -440,51 +441,103 @@ const MessageCenter = () => {
     setLoadingCompanies(true);
     
     try {
-      // Obtener todas las empresas de Firestore
-      const companiesRef = collection(db, 'companies');
-      const querySnapshot = await getDocs(companiesRef);
+      // Búsqueda en varias colecciones para maximizar resultados
+      const companiesPromises = [
+        // 1. Buscar en colección 'companies'
+        getDocs(collection(db, 'companies')),
+        // 2. Buscar en colección 'empresas' (nombre alternativo)
+        getDocs(collection(db, 'empresas')),
+        // 3. Buscar en 'users' filtrando por tipo 'company'
+        getDocs(firestoreQuery(collection(db, 'users'), where('type', '==', 'company')))
+      ] as const;
       
-      if (querySnapshot.empty) {
-        console.log("No se encontraron empresas en la base de datos");
-        setCompanies([]);
-        setLoadingCompanies(false);
-        return;
-      }
+      const [companiesSnapshot, empresasSnapshot, usersSnapshot] = await Promise.all(companiesPromises);
       
-      // Transformar documentos en objetos de empresa
-      let allCompanies = querySnapshot.docs.map(doc => {
-        const data = doc.data();
-        return { 
+      // Procesar resultados de las tres consultas
+      let allCompanies: any[] = [];
+      
+      // Procesar 'companies'
+      companiesSnapshot.docs.forEach(doc => {
+        const data = doc.data() as any;
+        allCompanies.push({ 
           id: doc.id, 
-          name: data.name || data.businessName || 'Empresa',
-          logo: data.logo || data.profilePicture || '',
-          category: data.category || data.type || '',
-          description: data.description || '',
+          name: data.name || data.businessName || data.companyName || 'Empresa',
+          logo: data.logo || data.profilePicture || data.photoURL || '',
+          category: data.category || data.type || data.rubro || '',
+          description: data.description || data.about || '',
           verified: data.verified || false
-        };
+        });
       });
       
-      console.log(`Total de empresas encontradas: ${allCompanies.length}`);
+      // Procesar 'empresas'
+      empresasSnapshot.docs.forEach(doc => {
+        const data = doc.data() as any;
+        allCompanies.push({ 
+          id: doc.id, 
+          name: data.name || data.businessName || data.nombreEmpresa || data.razonSocial || 'Empresa',
+          logo: data.logo || data.profilePicture || data.photoURL || '',
+          category: data.category || data.type || data.rubro || '',
+          description: data.description || data.about || '',
+          verified: data.verified || false
+        });
+      });
+      
+      // Procesar 'users' de tipo 'company'
+      usersSnapshot.docs.forEach(doc => {
+        const data = doc.data() as any;
+        if (data.type === 'company' || data.userType === 'company' || data.role === 'company') {
+          allCompanies.push({ 
+            id: doc.id, 
+            name: data.displayName || data.name || data.businessName || data.companyName || 'Empresa',
+            logo: data.photoURL || data.logo || data.profilePicture || '',
+            category: data.category || data.type || data.rubro || '',
+            description: data.description || data.about || data.bio || '',
+            verified: data.verified || false
+          });
+        }
+      });
+      
+      // Eliminar duplicados basados en ID
+      const uniqueCompanies = Array.from(
+        new Map(allCompanies.map(company => [company.id, company])).values()
+      );
+      
+      console.log(`Total de empresas encontradas (sin duplicados): ${uniqueCompanies.length}`);
       
       // Si hay una consulta, filtrar los resultados
+      let filteredCompanies = uniqueCompanies;
       if (query && query.trim().length > 0) {
         const q = query.toLowerCase().trim();
-        allCompanies = allCompanies.filter(company => {
-          const companyName = (company.name || '').toLowerCase();
-          const categoryName = (company.category || '').toLowerCase();
-          const descriptionText = (company.description || '').toLowerCase();
-          
-          return companyName.includes(q) || 
-                 categoryName.includes(q) || 
-                 descriptionText.includes(q);
-        });
-        console.log(`Empresas filtradas por "${query}": ${allCompanies.length}`);
+        // Dividir la consulta en palabras para búsqueda más flexible
+        const searchTerms = q.split(/\s+/).filter(term => term.length > 1);
+        
+        if (searchTerms.length > 0) {
+          filteredCompanies = uniqueCompanies.filter(company => {
+            const companyName = (company.name || '').toLowerCase();
+            const categoryName = (company.category || '').toLowerCase();
+            const descriptionText = (company.description || '').toLowerCase();
+            
+            // Verificar si alguno de los términos coincide con alguno de los campos
+            return searchTerms.some(term => 
+              companyName.includes(term) || 
+              categoryName.includes(term) || 
+              descriptionText.includes(term)
+            );
+          });
+        }
+        console.log(`Empresas filtradas por "${query}": ${filteredCompanies.length}`);
       }
       
-      // Ordenar alfabéticamente y limitar resultados
-      const results = allCompanies
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .slice(0, 30); // Aumentar límite a 30 resultados
+      // Ordenar por relevancia (empresas verificadas primero) y luego alfabéticamente
+      const results = filteredCompanies
+        .sort((a, b) => {
+          // Primero mostrar empresas verificadas
+          if (a.verified && !b.verified) return -1;
+          if (!a.verified && b.verified) return 1;
+          // Luego ordenar alfabéticamente
+          return a.name.localeCompare(b.name);
+        })
+        .slice(0, 50); // Aumentar límite a 50 resultados para más opciones
       
       setCompanies(results);
     } catch (error) {
@@ -511,6 +564,19 @@ const MessageCenter = () => {
     } else {
       // Limpiar resultados si no estamos en modo búsqueda de empresas
       setCompanies([]);
+    }
+  }, [searchMode]);
+  
+  // Efecto separado para la búsqueda con debounce
+  useEffect(() => {
+    if (searchMode === 'companies') {
+      // Añadir debounce para no buscar en cada tecla
+      const debounceTimer = setTimeout(() => {
+        console.log('Buscando empresas con delay:', searchQuery);
+        searchCompanies(searchQuery);
+      }, 300); // 300ms de debounce
+      
+      return () => clearTimeout(debounceTimer);
     }
   }, [searchQuery, searchMode]);
 
@@ -660,11 +726,22 @@ const MessageCenter = () => {
         <div className="mt-3 relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
           <Input
-            placeholder={searchMode === 'chats' ? "Buscar conversaciones" : "Buscar empresas..."}
-            className="pl-9 rounded-full"
+            placeholder={searchMode === 'chats' 
+              ? "Buscar en mis conversaciones..." 
+              : "Buscar empresas por nombre, categoría..."
+            }
+            className="pl-9 pr-9 rounded-full border-gray-300 focus-visible:ring-primary"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
+          {searchQuery && (
+            <button 
+              onClick={() => setSearchQuery('')}
+              className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+            >
+              <X size={16} />
+            </button>
+          )}
           <div className="flex items-center gap-1 mt-2 justify-between">
             <button 
               onClick={() => {
@@ -847,13 +924,18 @@ const MessageCenter = () => {
             </div>
           ) : (
             <>
-              <div className="p-2 bg-primary-50/50 border-b">
-                <p className="text-xs text-gray-600 text-center">
-                  {searchQuery ? 
-                    `Se encontraron ${companies.length} empresas que coinciden con "${searchQuery}"` :
-                    `Mostrando ${companies.length} empresas disponibles`
-                  }
-                </p>
+              <div className="p-3 bg-primary-50/50 border-b">
+                <div className="flex flex-col items-center justify-center">
+                  <p className="text-sm font-medium text-primary">
+                    {searchQuery ? 
+                      `Se encontraron ${companies.length} empresas que coinciden con "${searchQuery}"` :
+                      `Mostrando ${companies.length} empresas disponibles`
+                    }
+                  </p>
+                  <p className="text-xs text-gray-600 mt-1">
+                    Selecciona una empresa para iniciar una conversación
+                  </p>
+                </div>
               </div>
               {companies.map((company) => (
                 <div
