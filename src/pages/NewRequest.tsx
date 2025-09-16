@@ -559,23 +559,60 @@ const NewRequest = () => {
         return;
       }
 
-      // Obtener la empresa asociada a la mejor cotización con todos los detalles disponibles
+      // Obtener la empresa asociada a la cotización seleccionada con todos los detalles disponibles
       const selectedCompanies = bestQuotes
-        .filter(quote => quote.bestCompany && !quote.notFound)
+        .filter(quote => {
+          // Verificar si hay una opción seleccionada o una empresa predeterminada
+          if (quote.notFound) return false;
+          
+          // Si hay opciones y se ha seleccionado una, usar esa opción
+          if (quote.options && quote.options.length > 0 && 
+              (quote.selectedOptionIndex !== undefined || quote.selectedOptionIndex === 0)) {
+            const selectedOption = quote.options[quote.selectedOptionIndex];
+            return selectedOption && selectedOption.companyId;
+          }
+          
+          // Si no hay opciones seleccionadas, usar la mejor cotización predeterminada
+          return quote.bestCompany;
+        })
         .map(quote => {
-          console.log(`[NewRequest] Añadiendo empresa seleccionada: ${quote.bestCompanyName} (ID: ${quote.bestCompany})`);
-          const company = {
-            id: quote.bestCompany, // ID principal para el filtrado
-            companyId: quote.bestCompany, // ID alternativo para compatibilidad
-            companyName: quote.bestCompanyName,
-            companyLogo: quote.bestCompanyLogo || null,
-            companyRating: quote.bestCompanyRating || 0,
-            companyVerified: quote.bestCompanyVerified || false,
-            // Incluir toda la información disponible del producto y precio
-            productName: quote.name,
-            productPrice: quote.bestPrice,
-            productDetails: quote.bestProduct || null
-          };
+          // Determinar qué empresa usar basado en la opción seleccionada o la mejor cotización
+          let company = {};
+          
+          // Si hay una opción seleccionada explícitamente, usar esa
+          if (quote.options && quote.options.length > 0 && 
+              (quote.selectedOptionIndex !== undefined || quote.selectedOptionIndex === 0)) {
+            const selectedOption = quote.options[quote.selectedOptionIndex];
+            
+            console.log(`[NewRequest] Añadiendo empresa seleccionada manualmente: ${selectedOption.companyName} (ID: ${selectedOption.companyId})`);
+            company = {
+              id: selectedOption.companyId, // ID principal para el filtrado
+              companyId: selectedOption.companyId, // ID alternativo para compatibilidad
+              companyName: selectedOption.companyName,
+              companyLogo: selectedOption.companyLogo || null,
+              companyRating: selectedOption.companyRating || 0,
+              companyVerified: selectedOption.companyVerified || false,
+              // Incluir toda la información disponible del producto y precio
+              productName: quote.name,
+              productPrice: selectedOption.price,
+              productDetails: selectedOption || null
+            };
+          } else {
+            // Usar la empresa predeterminada si no hay selección manual
+            console.log(`[NewRequest] Añadiendo empresa seleccionada por defecto: ${quote.bestCompanyName} (ID: ${quote.bestCompany})`);
+            company = {
+              id: quote.bestCompany, // ID principal para el filtrado
+              companyId: quote.bestCompany, // ID alternativo para compatibilidad
+              companyName: quote.bestCompanyName,
+              companyLogo: quote.bestCompanyLogo || null,
+              companyRating: quote.bestCompanyRating || 0,
+              companyVerified: quote.bestCompanyVerified || false,
+              // Incluir toda la información disponible del producto y precio
+              productName: quote.name,
+              productPrice: quote.bestPrice,
+              productDetails: quote.bestProduct || null
+            };
+          }
           
           // Verificar que existe un nombre real de empresa
           console.log(`[NewRequest] Verificando nombre de empresa para ${quote.name}: ${company.companyName}`);
@@ -641,8 +678,21 @@ const NewRequest = () => {
           const itemOrig = formData.items.find(i => i.name === quote.name);
           if (itemOrig && itemOrig.price && !isNaN(itemOrig.price)) suggested = Number(itemOrig.price);
         }
-        if (suggested && quote.bestPrice && !isNaN(quote.bestPrice)) {
-          const diff = suggested - Number(quote.bestPrice);
+        
+        // Determinar el precio seleccionado - puede ser de una opción manual o el bestPrice
+        let selectedPrice = quote.bestPrice;
+        
+        // Si hay una opción seleccionada explícitamente, usar su precio
+        if (quote.options && quote.options.length > 0 && 
+            (quote.selectedOptionIndex !== undefined || quote.selectedOptionIndex === 0)) {
+          const selectedOption = quote.options[quote.selectedOptionIndex];
+          if (selectedOption && selectedOption.price) {
+            selectedPrice = selectedOption.price;
+          }
+        }
+        
+        if (suggested && selectedPrice && !isNaN(selectedPrice)) {
+          const diff = suggested - Number(selectedPrice);
           if (diff > 0) savings += diff;
         }
       });
@@ -664,8 +714,23 @@ const NewRequest = () => {
         acceptedAt: new Date().toISOString(),
         savings: Math.round(savings), // Guardar el ahorro total (redondeado)
         totalAmount: bestQuotes
-          .filter(quote => quote.bestPrice && !isNaN(quote.bestPrice) && !quote.notFound)
-          .reduce((total, quote) => total + Number(quote.bestPrice) * (quote.quantity || 1), 0) // Calcular el costo total de la cotización
+          .filter(quote => !quote.notFound)
+          .reduce((total, quote) => {
+            // Calcular el precio basado en la opción seleccionada o el mejor precio por defecto
+            let price = quote.bestPrice;
+            if (quote.options && quote.options.length > 0 && 
+                (quote.selectedOptionIndex !== undefined || quote.selectedOptionIndex === 0)) {
+              const selectedOption = quote.options[quote.selectedOptionIndex];
+              if (selectedOption && selectedOption.price) {
+                price = selectedOption.price;
+              }
+            }
+            
+            if (price && !isNaN(price)) {
+              return total + Number(price) * (quote.quantity || 1);
+            }
+            return total;
+          }, 0) // Calcular el costo total de la cotización usando las opciones seleccionadas
       };
 
       // Guardar la solicitud en Firestore SOLO cuando el usuario hace clic en aceptar
@@ -1090,10 +1155,13 @@ const NewRequest = () => {
                     onClick={() => {
                       // Al aceptar, guardar la opción seleccionada de cada producto como la mejor
                       const updatedQuotes = bestQuotes.map(q => {
-                        if (q.options && q.options.length > 0 && (q.selectedOptionIndex !== undefined || q.selectedOptionIndex === 0)) {
+                        // Si hay una opción seleccionada, usarla como la mejor
+                        if (q.options && q.options.length > 0 && 
+                            (q.selectedOptionIndex !== undefined || q.selectedOptionIndex === 0)) {
                           const sel = q.options[q.selectedOptionIndex];
                           // Asegurar que siempre exista un nombre de empresa
                           const companyName = sel.companyName || sel.companyId || "Empresa disponible";
+                          console.log(`Seleccionando la opción ${q.selectedOptionIndex} para item ${q.name}: ${companyName}`);
                           return {
                             ...q,
                             bestCompany: sel.companyId,
@@ -1111,7 +1179,9 @@ const NewRequest = () => {
                             bestProduct: sel,
                             imageUrl: sel.imageUrl || q.imageUrl,
                             matchType: sel.matchType,
-                            notFound: false
+                            notFound: false,
+                            // Importante: mantener el índice seleccionado para usarlo en handleAcceptBestQuote
+                            selectedOptionIndex: q.selectedOptionIndex
                           };
                         }
                         return q;
@@ -1127,7 +1197,8 @@ const NewRequest = () => {
                       
                       console.log(`Total a guardar: $${totalCost}`);
                       
-                      setTimeout(() => handleAcceptBestQuote(), 100);
+                      // Llamar a handleAcceptBestQuote para procesar la solicitud con las opciones seleccionadas
+                      handleAcceptBestQuote();
                     }}
                   >
                     <CheckCircle className="w-5 h-5 mr-2" />

@@ -26,7 +26,8 @@ import {
   DollarSign,
   Calendar,
   CreditCard,
-  Info
+  Info,
+  User
 } from "lucide-react";
 import {
   Select,
@@ -91,8 +92,32 @@ const OrderTracking = () => {
             }
           }
           
+          // Verificar y extraer información del repartidor de diferentes estructuras posibles
+          if (orderData.deliveryInfo && orderData.deliveryInfo.repartidor) {
+            console.log("Información del repartidor encontrada en deliveryInfo:", orderData.deliveryInfo.repartidor);
+            orderData.repartidor = orderData.deliveryInfo.repartidor;
+          } else if (orderData.delivery && typeof orderData.delivery === 'object') {
+            console.log("Información del repartidor encontrada en delivery:", orderData.delivery);
+            // Ya está en orderData.delivery, no necesitamos hacer nada
+          } else if (orderData.repartidorData) {
+            console.log("Información del repartidor encontrada en repartidorData:", orderData.repartidorData);
+            orderData.repartidor = orderData.repartidorData;
+          } else if (orderData.deliveryPersonId || orderData.repartidorId) {
+            // En este caso, solo tenemos el ID pero no los datos completos
+            console.log("ID del repartidor encontrado, pero no sus datos completos");
+          }
+          
           // Depuración completa de la estructura del pedido
           console.log("Estructura completa del pedido:", JSON.stringify(orderData, null, 2));
+          
+          // Específicamente revisar información del repartidor
+          console.log("Información del repartidor:", 
+            orderData.repartidor || 
+            orderData.deliveryPerson || 
+            orderData.deliveryAssigned || 
+            orderData.delivery || 
+            "No hay información de repartidor"
+          );
           
           setOrderDetails(orderData);
           setCurrentStatus(orderData.deliveryStatus || "pendiente");
@@ -565,6 +590,285 @@ const OrderTracking = () => {
               </CardFooter>
             </Card>
 
+            {/* Información del repartidor asignado */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center">
+                  <Truck className="h-5 w-5 mr-2 text-blue-600" />
+                  {(orderDetails?.deliveryAssigned || 
+                    orderDetails?.repartidor || 
+                    orderDetails?.deliveryPerson || 
+                    orderDetails?.delivery) ? 
+                    "Repartidor Asignado" : 
+                    "Información de Entrega"}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {(() => {
+                  // Depuración para verificar la estructura del pedido
+                  console.log("DEBUG - Información del repartidor:", {
+                    deliveryAssigned: orderDetails?.deliveryAssigned,
+                    repartidor: orderDetails?.repartidor,
+                    deliveryPerson: orderDetails?.deliveryPerson,
+                    delivery: orderDetails?.delivery,
+                    deliveryDriver: orderDetails?.deliveryDriver,
+                    repartidorAsignado: orderDetails?.repartidorAsignado,
+                    pedido: orderDetails
+                  });
+                  
+                  // Identificar qué objeto contiene la información del repartidor
+                  const deliveryPerson = 
+                    orderDetails?.deliveryAssigned || 
+                    orderDetails?.repartidor || 
+                    orderDetails?.deliveryPerson ||
+                    orderDetails?.delivery ||
+                    orderDetails?.deliveryDriver ||
+                    orderDetails?.repartidorAsignado;
+                  
+                  // Verificar también estructuras anidadas
+                  const anidado = 
+                    (orderDetails?.deliveryInfo && orderDetails?.deliveryInfo.repartidor) ||
+                    (orderDetails?.deliveryDetails && orderDetails?.deliveryDetails.person);
+                  
+                  // Si hay información en cualquier estructura
+                  if (deliveryPerson || anidado) {
+                    // Si la información está en una estructura anidada, usarla
+                    const finalDeliveryPerson = deliveryPerson || anidado;
+                    // Extraer nombre (considerando diferentes estructuras)
+                    const name = 
+                      finalDeliveryPerson.name || 
+                      finalDeliveryPerson.nombre || 
+                      finalDeliveryPerson.displayName || 
+                      finalDeliveryPerson.fullName ||
+                      (typeof finalDeliveryPerson === 'string' ? finalDeliveryPerson : "Repartidor");
+                    
+                    // Extraer ID (considerando diferentes estructuras)
+                    const id = 
+                      finalDeliveryPerson.id || 
+                      finalDeliveryPerson.uid || 
+                      finalDeliveryPerson._id || 
+                      finalDeliveryPerson.driverId ||
+                      "No disponible";
+                    
+                    // Extraer teléfono (considerando diferentes estructuras)
+                    const phone = 
+                      finalDeliveryPerson.phone || 
+                      finalDeliveryPerson.telefono || 
+                      finalDeliveryPerson.phoneNumber || 
+                      finalDeliveryPerson.tel ||
+                      (finalDeliveryPerson.contactInfo && finalDeliveryPerson.contactInfo.phone);
+                    
+                    // Extraer email (considerando diferentes estructuras)
+                    const email = 
+                      finalDeliveryPerson.email || 
+                      finalDeliveryPerson.correo || 
+                      finalDeliveryPerson.emailAddress || 
+                      finalDeliveryPerson.mail ||
+                      (finalDeliveryPerson.contactInfo && finalDeliveryPerson.contactInfo.email);
+                    
+                    // Extraer estado (considerando diferentes estructuras)
+                    const estado = 
+                      orderDetails.deliveryStatus || 
+                      orderDetails.estadoEntrega ||
+                      orderDetails.status;
+                    
+                    return (
+                      <div className="space-y-4">
+                        <div className="flex items-center space-x-3">
+                          <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
+                            <User className="h-5 w-5 text-blue-600" />
+                          </div>
+                          <div>
+                            <p className="font-medium">{name}</p>
+                            <p className="text-sm text-gray-500">ID: {id}</p>
+                          </div>
+                        </div>
+                        
+                        <div className="space-y-2 pt-2">
+                          {phone && (
+                            <div className="flex items-center text-sm">
+                              <Phone className="h-4 w-4 mr-2 text-gray-500" />
+                              <p>{phone}</p>
+                            </div>
+                          )}
+                          {email && (
+                            <div className="flex items-center text-sm">
+                              <Mail className="h-4 w-4 mr-2 text-gray-500" />
+                              <p>{email}</p>
+                            </div>
+                          )}
+                        </div>
+                        
+                        {(estado === "en_camino" || estado === "enviado") && (
+                          <div className="pt-2 border-t mt-2">
+                            <div className="flex items-center text-sm text-green-600">
+                              <Info className="h-4 w-4 mr-2" />
+                              <p>Entrega en progreso</p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  } else if (orderDetails?.deliveryStatus === "en_camino" && !anidado && !deliveryPerson) {
+                    // Si el estado es "en camino" pero no hay repartidor asignado explícitamente, 
+                    // asumimos que hay un repartidor (simplemente no tenemos sus datos)
+                    return (
+                      <div className="space-y-4">
+                        <div className="flex items-center space-x-3 bg-blue-50 p-3 rounded-lg">
+                          <div className="text-center">
+                            <Truck className="h-5 w-5 text-blue-600" />
+                          </div>
+                          <div>
+                            <p className="font-medium">Pedido en camino</p>
+                            <p className="text-sm text-gray-500">
+                              Un repartidor está llevando este pedido a su destino.
+                            </p>
+                          </div>
+                        </div>
+                        
+                        <div className="bg-blue-50 p-3 rounded-lg">
+                          <p className="text-sm text-blue-800 flex items-center mb-2">
+                            <Info className="h-4 w-4 mr-2" />
+                            El pedido ha sido asignado a un repartidor
+                          </p>
+                          <p className="text-xs text-gray-600">
+                            Los detalles del repartidor no están disponibles en este momento.
+                          </p>
+                        </div>
+                        
+                        {orderDetails?.statusNote && (
+                          <div className="pt-2 border-t mt-2">
+                            <p className="text-sm font-medium text-gray-500 mb-1">Nota del estado:</p>
+                            <p className="text-sm italic">{orderDetails.statusNote}</p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  } else {
+                    // No hay repartidor asignado, mostrar el estado actual del pedido
+                    return (
+                      <div className="space-y-4">
+                        <div className="flex items-center space-x-3 bg-blue-50 p-3 rounded-lg">
+                          <div className="text-center">
+                            {getStatusIcon(orderDetails?.deliveryStatus || "pendiente")}
+                          </div>
+                          <div>
+                            <p className="font-medium">Estado: {
+                              orderDetails?.deliveryStatus === "pendiente"
+                              ? "Pendiente"
+                              : orderDetails?.deliveryStatus === "enviado"
+                              ? "Enviado"
+                              : orderDetails?.deliveryStatus === "en_camino"
+                              ? "En camino"
+                              : orderDetails?.deliveryStatus === "entregado"
+                              ? "Entregado"
+                              : "Pendiente"
+                            }</p>
+                            <p className="text-sm text-gray-500">
+                              {orderDetails?.deliveryStatus === "pendiente" && "En espera de asignación"}
+                              {orderDetails?.deliveryStatus === "enviado" && "El pedido ha sido enviado"}
+                              {orderDetails?.deliveryStatus === "en_camino" && "El pedido está en ruta de entrega"}
+                              {orderDetails?.deliveryStatus === "entregado" && "Pedido entregado con éxito"}
+                            </p>
+                          </div>
+                        </div>
+                        
+                        <div className="bg-yellow-50 p-3 rounded-lg">
+                          <p className="text-sm text-yellow-800 flex items-center mb-2">
+                            <Info className="h-4 w-4 mr-2" />
+                            No hay repartidor asignado para este pedido
+                          </p>
+                          <p className="text-xs text-gray-600">
+                            Puede asignar un repartidor desde el panel de administración del pedido.
+                          </p>
+                        </div>
+                        
+                        {orderDetails?.statusNote && (
+                          <div className="pt-2 border-t mt-2">
+                            <p className="text-sm font-medium text-gray-500 mb-1">Nota del estado:</p>
+                            <p className="text-sm italic">{orderDetails.statusNote}</p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
+                })()}
+              </CardContent>
+              <CardFooter>
+                {(() => {
+                  // Identificar qué objeto contiene la información del repartidor (misma lógica que arriba)
+                  const deliveryPerson = 
+                    orderDetails?.deliveryAssigned || 
+                    orderDetails?.repartidor || 
+                    orderDetails?.deliveryPerson ||
+                    orderDetails?.delivery ||
+                    orderDetails?.deliveryDriver ||
+                    orderDetails?.repartidorAsignado;
+                  
+                  // Verificar también estructuras anidadas
+                  const anidado = 
+                    (orderDetails?.deliveryInfo && orderDetails?.deliveryInfo.repartidor) ||
+                    (orderDetails?.deliveryDetails && orderDetails?.deliveryDetails.person);
+                  
+                  // Si hay un repartidor o el estado es "en camino"
+                  if (deliveryPerson || anidado || orderDetails?.deliveryStatus === "en_camino") {
+                    const finalDeliveryPerson = deliveryPerson || anidado;
+                    const repartidorId = finalDeliveryPerson ? (
+                      finalDeliveryPerson.id || 
+                      finalDeliveryPerson.uid || 
+                      finalDeliveryPerson._id ||
+                      finalDeliveryPerson.driverId
+                    ) : null;
+                      
+                    return (
+                      <Button
+                        variant="outline"
+                        className="w-full hover:bg-blue-50 text-blue-600 border-blue-200 hover:border-blue-300 transition-colors group"
+                        onClick={() => {
+                          if (repartidorId) {
+                            // Navegar a mensajes con el repartidor
+                            console.log("🚚 Navegando a chat con repartidor ID:", repartidorId);
+                            navigate(`/backoffice/messages?deliveryId=${repartidorId}`);
+                          } else if (orderDetails?.deliveryStatus === "en_camino") {
+                            // Si está en camino pero no tenemos ID del repartidor
+                            toast({
+                              title: "Información",
+                              description: "Este pedido está en camino, pero los datos del repartidor no están disponibles",
+                            });
+                          } else {
+                            toast({
+                              title: "Error",
+                              description: "No se pudo identificar al repartidor para iniciar el chat",
+                              variant: "destructive"
+                            });
+                          }
+                        }}
+                      >
+                        <MessageSquare className="h-4 w-4 mr-2 group-hover:scale-110 transition-transform" />
+                        {orderDetails?.deliveryStatus === "en_camino" && !repartidorId ? "Ver Detalles" : "Contactar Repartidor"}
+                      </Button>
+                    );
+                  } else {
+                    return (
+                      <Button
+                        variant="outline"
+                        className="w-full hover:bg-green-50 text-green-600 border-green-200 hover:border-green-300 transition-colors group"
+                        onClick={() => {
+                          toast({
+                            title: "Próximamente",
+                            description: "La función de asignar repartidor estará disponible próximamente",
+                          });
+                        }}
+                      >
+                        <User className="h-4 w-4 mr-2 group-hover:scale-110 transition-transform" />
+                        Asignar Repartidor
+                      </Button>
+                    );
+                  }
+                })()}
+              </CardFooter>
+            </Card>
+            
             {/* Detalles de pago */}
             <Card>
               <CardHeader>

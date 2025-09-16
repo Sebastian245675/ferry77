@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { collection, getDocs, query, where, doc, updateDoc, getDoc, serverTimestamp, addDoc } from "firebase/firestore";
 import { DeliveryStatus } from "../lib/models";
 import { db } from "../lib/firebase";
+import { calculateTotal, getProductPrice, getQuotePrice } from "../lib/priceUtils";
 import { getAuth } from "firebase/auth";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -44,6 +45,9 @@ interface CompanyData {
   name?: string;
   companyName?: string;
   isVerified?: boolean;
+  verificationRequested?: boolean;
+  verificationDocumentsUploaded?: boolean;
+  verificationStatus?: string;
   profileImage?: string;
   photoURL?: string;
   userId?: string;
@@ -106,33 +110,7 @@ interface Product {
   [key: string]: any; // Para capturar cualquier otro campo
 }
 
-// Función auxiliar para calcular el total de productos
-function calculateTotal(items: any[]): number {
-  if (!items || !Array.isArray(items) || items.length === 0) return 0;
-  
-  let total = 0;
-  for (const item of items) {
-    if (!item) continue; // Saltamos items undefined o null
-    
-    let price = 0;
-    // Intentamos extraer el precio de diversas formas
-    if (typeof item.price === 'number') price = item.price;
-    else if (typeof item.price === 'string') price = parseFloat(item.price) || 0;
-    else if (typeof item.precio === 'number') price = item.precio;
-    else if (typeof item.precio === 'string') price = parseFloat(item.precio) || 0;
-    else if (item.unitPrice) price = typeof item.unitPrice === 'number' ? item.unitPrice : parseFloat(item.unitPrice) || 0;
-    
-    // Verificamos que el precio sea válido
-    if (isNaN(price)) price = 0;
-    
-    // Obtenemos la cantidad
-    const quantity = item.quantity || item.cantidad || 1;
-    
-    // Sumamos al total
-    total += price * quantity;
-  }
-  return total;
-}
+// Las funciones para manejar precios ahora están en priceUtils.ts
 
 interface Comment {
   id: string;
@@ -146,7 +124,10 @@ const DashboardEmpresas: React.FC = () => {
   const user = auth.currentUser;
   const [company, setCompany] = useState<{ 
     name: string; 
-    isVerified: boolean; 
+    isVerified: boolean;
+    verificationRequested: boolean;
+    verificationDocumentsUploaded: boolean;
+    verificationStatus: string; 
     profileImage: string; 
     userId: string;
     hasLocation: boolean;
@@ -154,6 +135,9 @@ const DashboardEmpresas: React.FC = () => {
   }>({
     name: '',
     isVerified: false,
+    verificationRequested: false,
+    verificationDocumentsUploaded: false,
+    verificationStatus: '',
     profileImage: '',
     userId: '',
     hasLocation: false,
@@ -172,6 +156,9 @@ const DashboardEmpresas: React.FC = () => {
           setCompany({
             name: companyData.name || companyData.companyName || user.displayName || '',
             isVerified: companyData.isVerified || false,
+            verificationRequested: companyData.verificationRequested || false,
+            verificationDocumentsUploaded: companyData.verificationDocumentsUploaded || false,
+            verificationStatus: companyData.verificationStatus || '',
             profileImage: companyData.profileImage || companyData.photoURL || '',
             userId: user.uid,
             hasLocation: Boolean(companyData.ubicacion || companyData.location),
@@ -2012,11 +1999,17 @@ const DashboardEmpresas: React.FC = () => {
             <div className="flex flex-wrap justify-center sm:justify-end gap-2 w-full sm:w-auto mt-3 sm:mt-0">
               {!company.isVerified && (
                 <Button 
-                  className="text-xs sm:text-sm bg-amber-500 hover:bg-amber-600 text-white rounded-lg shadow-md border-none w-full sm:w-auto"
+                  className={`text-xs sm:text-sm ${
+                    company.verificationRequested || company.verificationDocumentsUploaded 
+                      ? "bg-yellow-300 hover:bg-yellow-400 text-gray-800" 
+                      : "bg-amber-500 hover:bg-amber-600 text-white"
+                  } rounded-lg shadow-md border-none w-full sm:w-auto`}
                   onClick={() => navigate('/backoffice/verification')}
                 >
                   <ShieldCheck className="h-4 w-4 mr-2" />
-                  Verificar Empresa
+                  {company.verificationRequested || company.verificationDocumentsUploaded 
+                    ? "Verificación Pendiente" 
+                    : "Verificar Empresa"}
                 </Button>
               )}
               {!company.hasLocation && (
@@ -2170,22 +2163,7 @@ const DashboardEmpresas: React.FC = () => {
                         <div className="flex items-center gap-2 text-xs text-gray-500">
                           <span className="flex items-center bg-green-50 text-green-700 px-2 py-1 rounded-full font-medium">
                             <DollarSign className="h-3 w-3 mr-1" />
-                            ${
-                              // Intentamos mostrar el monto total de distintas maneras
-                              quote.totalAmount 
-                                ? quote.totalAmount.toLocaleString() 
-                                : quote.amount 
-                                  ? quote.amount.toLocaleString() 
-                                  : quote.total 
-                                    ? quote.total.toLocaleString()
-                                    : quote.budget
-                                      ? quote.budget.toLocaleString()
-                                      : (quote.products && quote.products.length > 0)
-                                        ? calculateTotal(quote.products).toLocaleString()
-                                        : (quote.items && quote.items.length > 0)
-                                          ? calculateTotal(quote.items).toLocaleString()
-                                          : "Por determinar"
-                            }
+                            ${quote.price || quote.monto || 0}
                           </span>
                           {(quote.deliveryTime || quote.tiempo) && (
                             <span className="flex items-center">
@@ -2566,22 +2544,7 @@ const DashboardEmpresas: React.FC = () => {
                         <div className="flex items-center gap-2 text-xs text-gray-500">
                           <span className="flex items-center bg-green-50 text-green-700 px-2 py-1 rounded-full font-medium">
                             <DollarSign className="h-3 w-3 mr-1" />
-                            ${
-                              // Intentamos mostrar el monto total de distintas maneras
-                              quote.totalAmount 
-                                ? quote.totalAmount.toLocaleString() 
-                                : quote.amount 
-                                  ? quote.amount.toLocaleString() 
-                                  : quote.total 
-                                    ? quote.total.toLocaleString()
-                                    : quote.budget
-                                      ? quote.budget.toLocaleString()
-                                      : (quote.products && quote.products.length > 0)
-                                        ? calculateTotal(quote.products).toLocaleString()
-                                        : (quote.items && quote.items.length > 0)
-                                          ? calculateTotal(quote.items).toLocaleString()
-                                          : "Por determinar"
-                            }
+                            ${quote.price || quote.monto || 0}
                           </span>
                           {quote.statusUpdatedAt && (
                             <span className="flex items-center">
@@ -2770,22 +2733,7 @@ const DashboardEmpresas: React.FC = () => {
                         <div className="mt-2 sm:mt-0 text-xs text-gray-500">
                           <span className="flex items-center bg-green-50 text-green-700 px-2 py-1 rounded-full font-medium mb-1">
                             <DollarSign className="h-3 w-3 mr-1" />
-                            ${
-                              // Intentamos mostrar el monto total de distintas maneras
-                              quote.totalAmount 
-                                ? quote.totalAmount.toLocaleString() 
-                                : quote.amount 
-                                  ? quote.amount.toLocaleString() 
-                                  : quote.total 
-                                    ? quote.total.toLocaleString()
-                                    : quote.budget
-                                      ? quote.budget.toLocaleString()
-                                      : (quote.products && quote.products.length > 0)
-                                        ? calculateTotal(quote.products).toLocaleString()
-                                        : (quote.items && quote.items.length > 0)
-                                          ? calculateTotal(quote.items).toLocaleString()
-                                          : "Por determinar"
-                            }
+                            ${quote.price || quote.monto || 0}
                           </span>
                           <span className="block sm:inline-block">
                             Fecha: {new Date(quote.createdAt || Date.now()).toLocaleDateString()}
