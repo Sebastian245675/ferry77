@@ -324,87 +324,67 @@ const Requests = () => {
         console.error("Error al obtener pedidos reportados:", error);
       }
 
-      let collectionName = "solicitud";
       try {
-        // Crear una consulta que use un listener en tiempo real para actualizar automáticamente
-        const q = query(
-          collection(db, collectionName),
-          where("userId", "==", user.uid)
-        );
-        
-        // Usar onSnapshot en lugar de getDocs para actualizaciones en tiempo real
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-          if (snapshot.empty) {
-            setRequests([]);
-            setTotalSolicitudes(0);
-            setTotalCotizaciones(0);
-            setAhorroTotal(0);
-            setEnProceso(0);
-            return;
-          }
+        // Llamar al backend para obtener las solicitudes
+        console.log("Obteniendo solicitudes desde backend para usuario:", user.uid);
+        const response = await fetch(`http://localhost:8090/api/solicitudes/usuario/${user.uid}`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
 
-        // Mapeo compatible con tu estructura real
-        const requestsData = snapshot.docs.map(doc => {
-          const data = doc.data();
-          
-          // Asegurarnos que selectedCompanies tenga datos válidos
-          let selectedCompanies = data.selectedCompanies || [];
-          if (selectedCompanies.length > 0) {
-            // Verificar que cada empresa tenga un nombre
-            selectedCompanies = selectedCompanies.map(company => {
-              // Si no hay nombre de empresa, intentar obtenerlo de otras propiedades
-              if (!company.companyName && !company.name) {
-                console.warn(`[Request ${doc.id}] Empresa sin nombre detectada:`, company);
-              }
-              return company;
-            });
-          }
-          
-          // Asegurarse que el campo savings sea un número válido
-          let savingsValue = 0;
-          if (data.savings !== undefined && data.savings !== null) {
-            // Convertir a número y verificar que no sea NaN
-            savingsValue = Number(data.savings);
-            if (isNaN(savingsValue)) {
-              console.warn(`[Request ${doc.id}] Valor de ahorro inválido:`, data.savings);
-              savingsValue = 0;
-            }
-          }
-          
-          console.log(`[Solicitud ${doc.id}] Ahorro detectado: $${savingsValue}`);
-          
-          // Registrar información de entrega para depuración
-          if (data.status === 'confirmado' || data.deliveryId) {
-            console.log(`[Solicitud ${doc.id}] Estado de entrega:`, {
-              deliveryId: data.deliveryId || "No disponible",
-              driverId: data.driverId || "Sin repartidor",
-              deliveryStatus: data.deliveryStatus || "Estado no definido",
-              status: data.status
-            });
-          }
-          
-          return {
-            id: doc.id,
-            status: data.status ?? "pendiente",
-            title: data.title ?? "Sin título",
-            items: Array.isArray(data.items) ? data.items : [],
-            userId: data.userId ?? "",
-            profession: data.profession ?? "general",
-            location: data.location ?? "No especificada",
-            urgency: data.urgency ?? "media",
-            budget: data.budget && !isNaN(Number(data.budget)) ? Number(data.budget) : 0,
-            createdAt: data.createdAt || new Date().toISOString(),
-            quotesCount: data.quotesCount ?? 0,
-            description: data.description ?? "",
-            estado: data.estado ?? "",
-            autoQuotes: data.autoQuotes || null,
-            selectedCompanies: selectedCompanies,
-            selectedCompanyIds: data.selectedCompanyIds || [],
-            savings: savingsValue, // Ahorro normalizado como número
-            driverId: data.driverId || null, // ID del repartidor asignado (si existe)
-            deliveryStatus: data.deliveryStatus || null, // Estado de la entrega
-            deliveryId: data.deliveryId || null, // ID de la entrega asociada
+        if (!response.ok) {
+          throw new Error(`Error HTTP: ${response.status}`);
+        }
+
+        const backendSolicitudes = await response.json();
+        console.log("Solicitudes recibidas del backend:", backendSolicitudes);
+        
+        if (!Array.isArray(backendSolicitudes)) {
+          console.error("El backend no devolvió un array:", backendSolicitudes);
+          setRequests([]);
+          setTotalSolicitudes(0);
+          setTotalCotizaciones(0);
+          setAhorroTotal(0);
+          setEnProceso(0);
+          return;
+        }
+
+        // Convertir las solicitudes del backend al formato esperado por el frontend
+        const requestsData = backendSolicitudes.map(solicitud => {
+          // Datos básicos desde el backend
+          const data = {
+            id: solicitud.id ? solicitud.id.toString() : '', // Convertir ID a string
+            status: solicitud.estado || "pendiente",
+            title: solicitud.titulo || "Sin título",
+            items: Array.isArray(solicitud.items) ? solicitud.items.map(item => ({
+              name: item.nombre || "Item",
+              quantity: item.cantidad || 1,
+              specifications: item.especificaciones || "",
+              imageUrl: item.imagenUrl || "",
+              price: item.precio || 0
+            })) : [],
+            userId: solicitud.usuarioId || "",
+            profession: solicitud.profesion || "general",
+            location: solicitud.ubicacion || "No especificada",
+            urgency: "media", // Por defecto, ya que el backend no tiene este campo aún
+            budget: solicitud.presupuesto || 0,
+            createdAt: solicitud.fechaCreacion || new Date().toISOString(),
+            quotesCount: 0, // Por defecto, implementar cotizaciones más adelante
+            description: solicitud.descripcion || "",
+            estado: solicitud.estado || "",
+            autoQuotes: null, // Por defecto
+            selectedCompanies: [], // Por defecto
+            selectedCompanyIds: [], // Por defecto
+            savings: 0, // Por defecto
+            driverId: null,
+            deliveryStatus: null,
+            deliveryId: null,
           };
+
+          console.log(`[Solicitud Backend ${data.id}] Convertida:`, data);
+          return data;
         }) as UserRequest[];
 
         // Estadísticas básicas
@@ -412,12 +392,9 @@ const Requests = () => {
         setTotalSolicitudes(requestsData.length);
         setTotalCotizaciones(requestsData.reduce((acc, r) => acc + (r.quotesCount || 0), 0));
         
-        // Implementación mejorada para calcular el ahorro total
+        // Calcular ahorro total (por ahora será 0, pero mantenemos la lógica)
         let totalAhorro = 0;
-        
-        // Iterar sobre todas las solicitudes y sumar los ahorros
         requestsData.forEach(request => {
-          // Verificar el valor del ahorro y sumarlo si es válido
           if (request.savings !== undefined && request.savings !== null && !isNaN(Number(request.savings))) {
             totalAhorro += Number(request.savings);
             console.log(`[Cálculo Ahorro] Solicitud ${request.id}: $${request.savings} - Total acumulado: $${totalAhorro}`);
@@ -430,17 +407,14 @@ const Requests = () => {
         
         // Contabilizar solicitudes en proceso
         setEnProceso(requestsData.filter(r => r.status === "cotizando").length);
-        });
-
-        // Devolver la función de limpieza para el listener
-        return () => unsubscribe();
+        
       } catch (error) {
         setRequests([]);
         setTotalSolicitudes(0);
         setTotalCotizaciones(0);
         setAhorroTotal(0);
         setEnProceso(0);
-        console.error("Error al cargar solicitudes:", error);
+        console.error("Error al cargar solicitudes desde backend:", error);
       }
     };
 

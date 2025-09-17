@@ -5,7 +5,7 @@ import Navbar from '../components/Navbar';
 import BottomNavigation from '../components/BottomNavigation';
 import RequestCard from '../components/RequestCard';
 import CompanyCard from '../components/CompanyCard';
-import { Plus, Package, Truck, Star, AlertCircle, CheckCircle, Users, UserCircle } from 'lucide-react';
+import { Plus, Package, Truck, Star, AlertCircle, CheckCircle, Users, UserCircle, MapPin } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -15,6 +15,13 @@ import { collection, query, where, orderBy, getDocs, doc, setDoc } from 'firebas
 
 
 const Index = () => {
+  // Estado para datos del usuario
+  const [userData, setUserData] = useState({
+    nombreCompleto: '',
+    ciudad: ''
+  });
+  const [loadingUserData, setLoadingUserData] = useState(true);
+
   // Estado para saludo
   // Redirección robusta para empresas
   useEffect(() => {
@@ -47,6 +54,48 @@ const Index = () => {
     });
     return () => unsubscribe && unsubscribe();
   }, []);
+
+  // Cargar datos del usuario desde el backend
+  useEffect(() => {
+    const auth = getAuth();
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        setLoadingUserData(false);
+        return;
+      }
+
+      try {
+        setLoadingUserData(true);
+        const response = await fetch(`http://localhost:8090/api/usuarios/firebase/${user.uid}`);
+        
+        if (response.ok) {
+          const data = await response.json();
+          setUserData({
+            nombreCompleto: data.nombreCompleto || 'Usuario',
+            ciudad: data.ciudad || 'Sin ciudad'
+          });
+        } else {
+          // Si no se encuentra el usuario en el backend, usar valores por defecto
+          setUserData({
+            nombreCompleto: user.displayName || 'Usuario',
+            ciudad: 'Sin ciudad'
+          });
+        }
+      } catch (error) {
+        console.error('Error cargando datos del usuario:', error);
+        // En caso de error, usar valores por defecto
+        setUserData({
+          nombreCompleto: user.displayName || 'Usuario',
+          ciudad: 'Sin ciudad'
+        });
+      } finally {
+        setLoadingUserData(false);
+      }
+    });
+
+    return () => unsubscribe && unsubscribe();
+  }, []);
+
   const [greeting, setGreeting] = useState(() => {
     const hour = new Date().getHours();
     if (hour < 12) return 'Buenos días';
@@ -137,7 +186,6 @@ const Index = () => {
         }
         // En desarrollo usaremos un valor fijo para facilitar el desarrollo
         if (process.env.NODE_ENV === 'development') {
-          console.log("Modo desarrollo: Mostrando 3 solicitudes activas en dashboard");
           setUserStats(prev => ({
             ...prev,
             activeRequests: 3, // Valor fijo para desarrollo
@@ -218,8 +266,6 @@ const Index = () => {
     setShowSearchDropdown(true);
     
     try {
-      console.log("Buscando:", value);
-      
       // 1. Primero buscar en listado_supremo 
       const listadoSupremoRef = collection(db, "listado_supremo");
       const snapshot = await getDocs(listadoSupremoRef);
@@ -236,8 +282,6 @@ const Index = () => {
         } as SuggestedItem;
       });
       
-      console.log(`Encontrados ${allSupremoItems.length} items en listado_supremo`);
-      
       // Filtrar por término de búsqueda - exacto primero (case insensitive)
       const normalizedSearchTerm = value.toLowerCase().trim();
       const exactSupremo = allSupremoItems.filter(item => 
@@ -250,8 +294,6 @@ const Index = () => {
         item.name.toLowerCase().includes(normalizedSearchTerm) && 
         item.name.toLowerCase() !== normalizedSearchTerm
       );
-      
-      console.log(`Coincidencias exactas: ${exactSupremo.length}, parciales: ${partialSupremo.length}`);
       
       // 2. Buscar también en productos de empresas (listados) para resultados más completos
       let allProducts = [];
@@ -275,8 +317,6 @@ const Index = () => {
         }
       });
       
-      console.log(`Encontrados ${allProducts.length} productos en empresas`);
-      
       // Coincidencia exacta y parcial para productos de empresas
       const exactProducts = allProducts.filter(prod => 
         prod.name && prod.name.toLowerCase().trim() === normalizedSearchTerm
@@ -287,8 +327,6 @@ const Index = () => {
         prod.name.toLowerCase().includes(normalizedSearchTerm) && 
         prod.name.toLowerCase().trim() !== normalizedSearchTerm
       );
-
-      console.log(`Empresas - coincidencias exactas: ${exactProducts.length}, parciales: ${partialProducts.length}`);
 
       // Agrupar resultados por nombre de producto
       function aggregate(items: SuggestedItem[], recomendado: boolean) {
@@ -335,8 +373,6 @@ const Index = () => {
         return true;
       });
       
-      console.log(`Resultados finales: ${results.length}`);
-      
       // Limitar a máximo 15 resultados para mejor rendimiento
       setSearchResults(results.slice(0, 15));
     } catch (e) {
@@ -367,9 +403,6 @@ const Index = () => {
     
     // Navegar a nueva solicitud con los parámetros
     navigate(`/new-request?${params.toString()}`);
-    
-    // Registrar evento de búsqueda (se podría implementar analytics)
-    console.log('Búsqueda seleccionada:', item.name);
   };
 
 
@@ -452,9 +485,21 @@ const Index = () => {
             backgroundSize: '15px 15px',
           }}></div>
           <div className="px-5 py-6 relative z-10">
-            <h1 className="text-2xl font-extrabold text-white mb-2 drop-shadow-md">
-              {greeting}, Juan 🔧
-            </h1>
+            <div className="flex items-start justify-between mb-4">
+              <div className="flex-1">
+                <h1 className="text-2xl font-extrabold text-white drop-shadow-md">
+                  {loadingUserData 
+                    ? `${greeting}, cargando...` 
+                    : `${greeting}, ${userData.nombreCompleto}! 🔧`}
+                </h1>
+              </div>
+              {!loadingUserData && userData.ciudad && userData.ciudad !== 'Sin ciudad' && (
+                <div className="flex items-center bg-white/20 backdrop-blur-sm rounded-full px-3 py-1.5 ml-3">
+                  <MapPin className="w-4 h-4 text-white mr-1.5" />
+                  <span className="text-white text-sm font-medium">{userData.ciudad}</span>
+                </div>
+              )}
+            </div>
             <p className="text-blue-100 text-sm mb-6 opacity-90">
               ¿Qué herramientas necesitas construir hoy?
             </p>
@@ -619,9 +664,21 @@ const Index = () => {
         <div className="max-w-7xl mx-auto px-4 py-6 md:pt-6">
           {/* Header - only visible on desktop */}
           <div className="hidden md:block mb-8">
-            <h1 className="text-2xl font-bold text-gray-900 mb-2">
-              {greeting}, Juan 👋
-            </h1>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex-1">
+                <h1 className="text-2xl font-bold text-gray-900">
+                  {loadingUserData 
+                    ? `${greeting}, cargando...` 
+                    : `${greeting}, ${userData.nombreCompleto}! 👋`}
+                </h1>
+              </div>
+              {!loadingUserData && userData.ciudad && userData.ciudad !== 'Sin ciudad' && (
+                <div className="flex items-center bg-gray-100 hover:bg-gray-200 transition-colors rounded-full px-4 py-2 ml-4">
+                  <MapPin className="w-4 h-4 text-gray-600 mr-2" />
+                  <span className="text-gray-700 font-medium">{userData.ciudad}</span>
+                </div>
+              )}
+            </div>
             <p className="text-gray-600">
               ¿Qué herramientas necesitas hoy?
             </p>

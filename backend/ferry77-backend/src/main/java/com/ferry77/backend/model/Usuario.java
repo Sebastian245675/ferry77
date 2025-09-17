@@ -29,6 +29,16 @@ public class Usuario {
     @NotBlank(message = "El tipo de usuario es obligatorio")
     private String userType; // cliente o empresa
     
+
+    private String verificationCode;
+    private Boolean verified = false;
+    private LocalDateTime verificationCodeExpiresAt;
+    private String password; 
+
+
+
+
+
     private String status; // activo, pendiente, suspendido
     private String rol; // usuario, empresa
     private Boolean banned = false;
@@ -116,4 +126,16 @@ public class Usuario {
 
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+
+    public String getVerificationCode() { return verificationCode; }
+    public void setVerificationCode(String verificationCode) { this.verificationCode = verificationCode; }
+
+    public Boolean getVerified() { return verified; }
+    public void setVerified(Boolean verified) { this.verified = verified; }
+
+    public LocalDateTime getVerificationCodeExpiresAt() { return verificationCodeExpiresAt; }
+    public void setVerificationCodeExpiresAt(LocalDateTime verificationCodeExpiresAt) { this.verificationCodeExpiresAt = verificationCodeExpiresAt; }
+
+    public String getPassword() { return password; }
+    public void setPassword(String password) { this.password = password; }
 }

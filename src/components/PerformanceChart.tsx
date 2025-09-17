@@ -41,7 +41,6 @@ export const PerformanceChart: React.FC<PerformanceChartProps> = ({ stats }) => 
   });
 
   useEffect(() => {
-    console.log("PerformanceChart recibió stats:", stats);
     if (stats && stats.months && stats.months.length > 0) {
       setChartData({
         labels: stats.months,

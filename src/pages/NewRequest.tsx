@@ -96,30 +96,7 @@ function calcularDistanciaYTiempo(punto1, punto2) {
 // Función de debug para verificar que los cálculos funcionan correctamente
 // (solo se usa para desarrollo)
 function testearCalculosDistancia() {
-  console.log("=== TESTEANDO CÁLCULOS DE DISTANCIA Y TIEMPO ===");
-  
-  // Pruebas con coordenadas
-  const coord1 = { lat: -34.603722, lon: -58.381592 }; // Buenos Aires
-  const coord2 = { lat: -34.921349, lon: -57.955547 }; // La Plata
-  
-  console.log("Distancia Buenos Aires - La Plata:");
-  console.log(calcularDistanciaYTiempo(coord1, coord2));
-  
-  // Prueba con distancia corta
-  const coord3 = { lat: -34.603722, lon: -58.371592 }; // A pocos km de Buenos Aires
-  console.log("Distancia corta (urbana):");
-  console.log(calcularDistanciaYTiempo(coord1, coord3));
-  
-  // Prueba con distancia muy larga
-  const coord4 = { lat: -31.417301, lon: -64.183238 }; // Córdoba
-  console.log("Distancia larga (Buenos Aires - Córdoba):");
-  console.log(calcularDistanciaYTiempo(coord1, coord4));
-  
-  // Varias llamadas para ver si hay variabilidad
-  console.log("Variabilidad en múltiples llamadas (mismas coordenadas):");
-  for (let i = 0; i < 5; i++) {
-    console.log(`#${i+1}:`, calcularDistanciaYTiempo(coord1, coord2));
-  }
+  // Función removida para producción
 }
 
 // Extraer coordenadas de una dirección
@@ -167,11 +144,8 @@ function extraerCoordenadas(direccion) {
     return { lat: -34.6, lon: -58.4 }; // Buenos Aires por defecto
   }
 }
-
-// Ejecutar tests al cargar el módulo
-// Comentar esta línea para producción
-testearCalculosDistancia();
 import { Link, useNavigate } from 'react-router-dom';
+import { logger } from '@/lib/logger';
 import { Plus, X, MapPin, Clock, DollarSign, Hammer, HardHat, Zap, ArrowLeft, CheckCircle, Building2, Store, AlertCircle, Loader2, Map, ExternalLink, ClipboardCheck, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -413,8 +387,8 @@ const NewRequest = () => {
             }
           }
           if (!displayName) displayName = "Empresa";
-          console.log(`Empresa encontrada en listados - ID: ${companyId}, Nombre: ${displayName}, Doc ID: ${docSnap.id}`);
-          console.log(`Datos completos de la empresa:`, JSON.stringify(data, null, 2));
+          logger.debug('NewRequest', `Empresa encontrada en listados - ID: ${companyId}, Nombre: ${displayName}, Doc ID: ${docSnap.id}`);
+          logger.debug('NewRequest', `Datos completos de la empresa:`, JSON.stringify(data, null, 2));
           // Obtener datos de ubicación de la empresa
           const ubicacion = data.ubicacion || {};
           
@@ -531,15 +505,59 @@ const NewRequest = () => {
     };
   });
 
-      // Ya no guardamos la solicitud aquí, solo mostramos las cotizaciones
-      // La solicitud se guardará solo cuando el usuario haga clic en "Aceptar cotización"
+      // Guardar la solicitud inmediatamente en el backend
+      const solicitudData = {
+        usuarioId: user.uid,
+        usuarioNombre: user.displayName || "Usuario",
+        usuarioEmail: user.email || "",
+        titulo: formData.title,
+        profesion: formData.profession,
+        ubicacion: formData.location,
+        presupuesto: formData.budget ? parseFloat(formData.budget) : null,
+        items: formData.items.map(item => ({
+          nombre: item.name,
+          cantidad: item.quantity || 1,
+          especificaciones: item.specifications,
+          imagenUrl: item.imageUrl,
+          precio: item.price ? parseFloat(item.price) : null
+        }))
+      };
+
+      console.log("[NewRequest] Enviando solicitud al backend:", JSON.stringify(solicitudData));
       
-      // Simular tiempo de procesamiento (opcional, para mejor UX)
-      setTimeout(() => {
+      try {
+        const response = await fetch('http://localhost:8090/api/solicitudes', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(solicitudData)
+        });
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const result = await response.json();
+        console.log("[NewRequest] Solicitud guardada correctamente:", result);
+        
+        if (result.success && result.solicitud) {
+          // TODO: Implementar notificaciones a empresas cuando sea necesario
+          // Por ahora solo guardar la solicitud y redirigir
+          
+          setIsLoading(false);
+          
+          // Redirigir directamente a solicitudes
+          navigate(`/requests`);
+        } else {
+          throw new Error(result.error || 'Error desconocido al guardar la solicitud');
+        }
+        
+      } catch (error) {
+        console.error("[NewRequest] Error al guardar solicitud:", error);
+        alert("Ha ocurrido un error al guardar tu solicitud. Por favor intenta nuevamente.");
         setIsLoading(false);
-        setBestQuotes(autoQuotes);
-        setShowQuoteModal(true);
-      }, 1500);
+      }
     } catch (error) {
       console.error("Error al procesar la solicitud:", error);
       setIsLoading(false);
@@ -733,38 +751,71 @@ const NewRequest = () => {
           }, 0) // Calcular el costo total de la cotización usando las opciones seleccionadas
       };
 
-      // Guardar la solicitud en Firestore SOLO cuando el usuario hace clic en aceptar
-      console.log("[NewRequest] Guardando solicitud con datos:", JSON.stringify(newRequest));
+      // Guardar la solicitud en el backend
+      const solicitudData = {
+        usuarioId: user.uid,
+        usuarioNombre: user.displayName || "Usuario",
+        usuarioEmail: user.email,
+        titulo: formData.title,
+        profesion: formData.profession || "general",
+        ubicacion: formData.location,
+        presupuesto: formData.budget ? parseFloat(formData.budget) : null,
+        items: formData.items.map(item => ({
+          nombre: item.name,
+          cantidad: item.quantity || 1,
+          especificaciones: item.specifications,
+          imagenUrl: item.imageUrl,
+          precio: item.price ? parseFloat(item.price) : null
+        }))
+      };
+
+      console.log("[NewRequest] Enviando solicitud al backend:", JSON.stringify(solicitudData));
       
       try {
-        const docRef = await addDoc(collection(db, "solicitud"), newRequest);
-        console.log("[NewRequest] Solicitud guardada correctamente con ID:", docRef.id);
-        
-        setRequestId(docRef.id);
-        
-        // Enviar también notificaciones a las empresas seleccionadas
-        for (const company of validatedSelectedCompanies) {
-          try {
-            // Crear una notificación para cada empresa seleccionada
-            await addDoc(collection(db, "notificaciones"), {
-              companyId: company.id,
-              userId: user.uid,
-              userName: user.displayName || "Usuario",
-              userAvatar: user.photoURL || null,
-              title: "Nueva solicitud de cotización",
-              description: `Has recibido una solicitud para: ${formData.title}`,
-              createdAt: new Date().toISOString(),
-              read: false,
-              requestId: docRef.id
-            });
-            console.log(`[NewRequest] Notificación enviada a empresa ${company.id}`);
-          } catch (error) {
-            console.error(`[NewRequest] Error al enviar notificación a empresa ${company.id}:`, error);
-          }
+        const response = await fetch('http://localhost:8090/api/solicitudes', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(solicitudData)
+        });
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
         }
+
+        const result = await response.json();
+        console.log("[NewRequest] Solicitud guardada correctamente:", result);
         
-        // Redirigir a solicitudes cotizando con un parámetro para resaltar la solicitud actual
-        navigate(`/requests?status=quoting&highlight=${docRef.id}`);
+        if (result.success && result.solicitud) {
+          setRequestId(result.solicitud.id);
+          
+          // TODO: Implementar notificaciones a empresas en el backend
+          // Por ahora las mantenemos en Firebase
+          for (const company of validatedSelectedCompanies) {
+            try {
+              await addDoc(collection(db, "notificaciones"), {
+                companyId: company.id,
+                userId: user.uid,
+                userName: user.displayName || "Usuario",
+                userAvatar: user.photoURL || null,
+                title: "Nueva solicitud de cotización",
+                description: `Has recibido una solicitud para: ${formData.title}`,
+                createdAt: new Date().toISOString(),
+                read: false,
+                requestId: result.solicitud.id.toString()
+              });
+              logger.debug('NewRequest', `Notificación enviada a empresa ${company.id}`);
+            } catch (error) {
+              console.error(`[NewRequest] Error al enviar notificación a empresa ${company.id}:`, error);
+            }
+          }
+          
+          // Redirigir a solicitudes cotizando con un parámetro para resaltar la solicitud actual
+          navigate(`/requests?status=quoting&highlight=${result.solicitud.id}`);
+        } else {
+          throw new Error(result.error || 'Error desconocido al guardar la solicitud');
+        }
         
       } catch (error) {
         console.error("[NewRequest] Error al guardar solicitud:", error);

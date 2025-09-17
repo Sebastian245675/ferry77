@@ -37,6 +37,7 @@ public class EmailService {
             // aunque falle el email
         }
     }
+
     
     private String buildEmailMessage(String nombre, String userType) {
         String tipoUsuario = userType.equals("cliente") ? "profesional" : "ferretería/proveedor";
@@ -59,5 +60,35 @@ public class EmailService {
             "Este es un correo automático, por favor no responder.",
             nombre, tipoUsuario
         );
+    }
+    public void sendVerificationCode(String to, String code) {
+        try {
+            logger.info("Iniciando envío de código a: {}", to);
+            
+            SimpleMailMessage message = new SimpleMailMessage();
+            message.setTo(to);
+            message.setFrom("j24291972@gmail.com");
+            message.setSubject("Ferry77 - Código de Verificación");
+            message.setText("Tu código de verificación es: " + code + 
+                          "\n\nEste código expira en 15 minutos." +
+                          "\n\nSi no solicitaste este código, ignora este mensaje.");
+            
+            logger.info("Enviando mensaje via SMTP...");
+            mailSender.send(message);
+            logger.info("✅ Email enviado exitosamente a: {}", to);
+            
+        } catch (org.springframework.mail.MailException e) {
+            logger.error("❌ Error de email: {}", e.getMessage());
+            throw new RuntimeException("Error de conexión con el servidor de email");
+        } catch (Exception e) {
+            logger.error("❌ Error general: {}", e.getMessage(), e);
+            throw new RuntimeException("Error enviando código: " + e.getMessage());
+        }
+    }
+
+    public String generateVerificationCode() {
+        java.util.Random random = new java.util.Random();
+        int code = 100000 + random.nextInt(900000); // Genera código de 6 dígitos
+        return String.valueOf(code);
     }
 }

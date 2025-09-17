@@ -53,6 +53,13 @@ const Auth = () => {
   const [isCompany, setIsCompany] = useState(false);
   const [showSoon, setShowSoon] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  
+  // Estados para el flujo de verificación por email
+  const [emailVerificationStep, setEmailVerificationStep] = useState<'email' | 'verification' | 'password' | 'complete'>('email');
+  const [verificationCode, setVerificationCode] = useState('');
+  const [emailVerified, setEmailVerified] = useState(false);
+  const [codeSent, setCodeSent] = useState(false);
+  
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -139,13 +146,180 @@ const Auth = () => {
   
   const [error, setError] = useState<string | null>(null);
 
+  // Función para enviar código de verificación
+  const sendVerificationCode = async () => {
+    if (!formData.email) {
+      setError('Por favor ingresa tu email');
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch('http://localhost:8090/api/usuarios/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: formData.email })
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setCodeSent(true);
+        setEmailVerificationStep('verification');
+        setError(null);
+      } else {
+        setError(data.error || 'Error enviando código');
+      }
+    } catch (err) {
+      setError('Error de conexión');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Función para verificar código
+  const verifyCode = async () => {
+    if (!verificationCode || verificationCode.length !== 6) {
+      setError('Por favor ingresa el código de 6 dígitos');
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch('http://localhost:8090/api/usuarios/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          email: formData.email, 
+          code: verificationCode 
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setEmailVerified(true);
+        setEmailVerificationStep('password');
+        setError(null);
+      } else {
+        setError(data.error || 'Código incorrecto');
+      }
+    } catch (err) {
+      setError('Error de conexión');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Función para establecer contraseña
+  const setUserPassword = async () => {
+    if (!formData.password || formData.password.length < 6) {
+      setError('La contraseña debe tener al menos 6 caracteres');
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch('http://localhost:8090/api/usuarios/set-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          email: formData.email, 
+          password: formData.password 
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setEmailVerificationStep('complete');
+        setError(null);
+        // Proceder con el registro completo automáticamente
+        setTimeout(() => {
+          handleCompleteRegistration();
+        }, 500);
+      } else {
+        setError(data.error || 'Error estableciendo contraseña');
+      }
+    } catch (err) {
+      setError('Error de conexión');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Función para completar el registro
+  const handleCompleteRegistration = async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+
+      // Validación según el tipo de registro
+      if (isCompany) {
+        if (!formData.companyName || !formData.nick || !formData.category || !formData.description || !formData.phone || !formData.location) {
+          setError('Por favor completa todos los campos de empresa.');
+          return;
+        }
+      } else {
+        if (!formData.name || !formData.phone || !formData.location) {
+          setError('Por favor completa todos los campos de usuario.');
+          return;
+        }
+      }
+
+      // Crear usuario en Firebase
+      const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
+      localStorage.setItem('userAuthenticated', 'true');
+      localStorage.setItem('userId', userCredential.user.uid);
+
+      // Guardar datos en el backend
+      const userData = {
+        firebaseUid: userCredential.user.uid,
+        nombreCompleto: isCompany ? formData.companyName : formData.name,
+        email: formData.email,
+        telefono: formData.phone,
+        ciudad: formData.location,
+        userType: isCompany ? 'empresa' : 'cliente',
+        companyName: isCompany ? formData.companyName : null,
+        nick: isCompany ? formData.nick : null,
+        category: isCompany ? formData.category : null,
+        description: isCompany ? formData.description : null,
+        verified: true // Ya fue verificado por email
+      };
+
+      await fetch('http://localhost:8090/api/usuarios', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(userData)
+      });
+
+      // Redirigir según el tipo de usuario
+      if (isCompany) {
+        window.location.href = '/backoffice';
+      } else {
+        window.location.href = '/dashboard';
+      }
+
+    } catch (error: any) {
+      console.error('Error completando registro:', error);
+      setError(error.message || 'Error completando el registro');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setIsLoading(true);
+    
     try {
-      // Log para depuración en móviles
-      console.log('isLogin:', isLogin, 'isCompany:', isCompany, 'formData:', formData);
       if (isLogin) {
         // Login con Firebase
         const userCredential = await signInWithEmailAndPassword(auth, formData.email, formData.password);
@@ -174,76 +348,19 @@ const Auth = () => {
           window.location.href = '/dashboard';
         }
       } else {
-        // Registro con Firebase
-        // Validación estricta según el tipo de registro
-        if (isCompany) {
-          if (!formData.companyName || !formData.nick || !formData.category || !formData.description || !formData.phone || !formData.location) {
-            setError('Por favor completa todos los campos de empresa.');
-            return;
-          }
+        // Para registro, ya se manejó el flujo de verificación por email
+        // Solo ejecutar el registro final si ya está verificado
+        if (emailVerificationStep === 'complete') {
+          handleCompleteRegistration();
         } else {
-          if (!formData.name || !formData.phone || !formData.location) {
-            setError('Por favor completa todos los campos de usuario.');
-            return;
-          }
-        }
-        const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
-        localStorage.setItem('userAuthenticated', 'true');
-        localStorage.setItem('userId', userCredential.user.uid);
-
-        // Guardar datos según tipo de cuenta
-        if (isCompany) {
-          // Empresa - solo guardar en backend MySQL
-          try {
-            await fetch('http://localhost:8090/api/usuarios', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                firebaseUid: userCredential.user.uid,
-                nombreCompleto: formData.companyName,
-                email: formData.email,
-                telefono: formData.phone,
-                ciudad: formData.location,
-                userType: 'empresa',
-                companyName: formData.companyName,
-                nick: formData.nick,
-                category: formData.category,
-                description: formData.description
-              })
-            });
-            window.location.href = '/backoffice';
-          } catch (backendError) {
-            console.error('Error guardando en backend:', backendError);
-            setError('Error al guardar los datos. Inténtalo de nuevo.');
-            return;
-          }
-        } else {
-          // Usuario normal - solo guardar en backend MySQL
-          try {
-            await fetch('http://localhost:8090/api/usuarios', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                firebaseUid: userCredential.user.uid,
-                nombreCompleto: formData.name,
-                email: formData.email,
-                telefono: formData.phone,
-                ciudad: formData.location,
-                userType: 'cliente'
-              })
-            });
-            window.location.href = '/dashboard';
-          } catch (backendError) {
-            console.error('Error guardando en backend:', backendError);
-            setError('Error al guardar los datos. Inténtalo de nuevo.');
-            return;
-          }
+          // Si no está en el paso completo, no hacer nada
+          // El flujo progresivo manejará los pasos
+          setError('Por favor completa el proceso de verificación por email');
         }
       }
     } catch (err: any) {
+      console.error("Error en autenticación:", err);
       setError(err.message);
-      // Log de error para depuración móvil
-      console.error('Error en registro/login:', err);
     } finally {
       setIsLoading(false);
     }
@@ -299,8 +416,8 @@ const Auth = () => {
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Registro usuario */}
-            {!isLogin && !isCompany && (
+            {/* Mostrar campos adicionales solo después de verificar email */}
+            {!isLogin && !isCompany && emailVerificationStep === 'complete' && (
               <>
                 <div>
                   <Label htmlFor="name">Nombre Completo</Label>
@@ -353,7 +470,7 @@ const Auth = () => {
             )}
 
             {/* Registro empresa */}
-            {!isLogin && isCompany && (
+            {!isLogin && isCompany && emailVerificationStep === 'complete' && (
               <>
                 <div>
                   <Label htmlFor="companyName">Nombre de la empresa</Label>
@@ -443,58 +560,173 @@ const Auth = () => {
               </>
             )}
 
-            {/* Email y contraseña */}
-            <div>
-              <Label htmlFor="email">Email</Label>
-              <div className="relative mt-1">
-                <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-                <Input
-                  id="email"
-                  type="email"
-                  required
-                  className="pl-10 text-gray-900"
-                  placeholder="tu@email.com"
-                  value={formData.email}
-                  onChange={(e) => setFormData({...formData, email: e.target.value})}
-                />
-              </div>
-            </div>
-            <div>
-              <Label htmlFor="password">Contraseña</Label>
-              <div className="relative mt-1">
-                <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-                <Input
-                  id="password"
-                  type={showPassword ? 'text' : 'password'}
-                  required
-                  className="pl-10 pr-10 text-gray-900"
-                  placeholder="••••••••"
-                  value={formData.password}
-                  onChange={(e) => setFormData({...formData, password: e.target.value})}
-                />
-                <button
-                  type="button"
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400"
-                  onClick={() => setShowPassword(!showPassword)}
-                >
-                  {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
-                </button>
-              </div>
-            </div>
-
-            <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700" disabled={isLoading}>
-              {isLoading ? (
-                <div className="flex items-center justify-center">
-                  <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  Procesando...
+            {/* Email y verificación progresiva para registro */}
+            {!isLogin ? (
+              <>
+                {/* Paso 1: Email */}
+                <div>
+                  <Label htmlFor="email">Email</Label>
+                  <div className="relative mt-1">
+                    <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                    <Input
+                      id="email"
+                      type="email"
+                      required
+                      className="pl-10 text-gray-900"
+                      placeholder="tu@email.com"
+                      value={formData.email}
+                      onChange={(e) => setFormData({...formData, email: e.target.value})}
+                      disabled={emailVerificationStep !== 'email'}
+                    />
+                    {emailVerificationStep === 'email' && (
+                      <Button
+                        type="button"
+                        onClick={sendVerificationCode}
+                        disabled={!formData.email || isLoading}
+                        className="absolute right-2 top-1/2 transform -translate-y-1/2 h-8 px-3 text-xs bg-blue-600 hover:bg-blue-700"
+                      >
+                        {isLoading ? 'Enviando...' : 'Verificar'}
+                      </Button>
+                    )}
+                    {emailVerificationStep !== 'email' && (
+                      <div className="absolute right-3 top-1/2 transform -translate-y-1/2 text-green-600">
+                        ✓
+                      </div>
+                    )}
+                  </div>
                 </div>
-              ) : (
-                isLogin ? 'Iniciar Sesión' : 'Crear Cuenta'
-              )}
-            </Button>
+
+                {/* Paso 2: Código de verificación */}
+                {emailVerificationStep === 'verification' && (
+                  <div>
+                    <Label htmlFor="verification-code">Código de Verificación</Label>
+                    <div className="relative mt-1">
+                      <Input
+                        id="verification-code"
+                        type="text"
+                        maxLength={6}
+                        required
+                        className="text-gray-900 text-center text-lg tracking-widest"
+                        placeholder="000000"
+                        value={verificationCode}
+                        onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, ''))}
+                      />
+                      <Button
+                        type="button"
+                        onClick={verifyCode}
+                        disabled={verificationCode.length !== 6 || isLoading}
+                        className="absolute right-2 top-1/2 transform -translate-y-1/2 h-8 px-3 text-xs bg-green-600 hover:bg-green-700"
+                      >
+                        {isLoading ? 'Verificando...' : 'Verificar'}
+                      </Button>
+                    </div>
+                    <p className="text-sm text-gray-500 mt-1">
+                      Ingresa el código de 6 dígitos enviado a tu email
+                    </p>
+                  </div>
+                )}
+
+                {/* Paso 3: Contraseña (solo se habilita después de verificar) */}
+                {(emailVerificationStep === 'password' || emailVerificationStep === 'complete') && (
+                  <div>
+                    <Label htmlFor="password">Contraseña</Label>
+                    <div className="relative mt-1">
+                      <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                      <Input
+                        id="password"
+                        type={showPassword ? 'text' : 'password'}
+                        required
+                        className="pl-10 pr-20 text-gray-900"
+                        placeholder="••••••••"
+                        value={formData.password}
+                        onChange={(e) => setFormData({...formData, password: e.target.value})}
+                      />
+                      <button
+                        type="button"
+                        className="absolute right-12 top-1/2 transform -translate-y-1/2 text-gray-400"
+                        onClick={() => setShowPassword(!showPassword)}
+                      >
+                        {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                      </button>
+                      {emailVerificationStep === 'password' && (
+                        <Button
+                          type="button"
+                          onClick={setUserPassword}
+                          disabled={!formData.password || formData.password.length < 6 || isLoading}
+                          className="absolute right-2 top-1/2 transform -translate-y-1/2 h-8 px-3 text-xs bg-purple-600 hover:bg-purple-700"
+                        >
+                          {isLoading ? 'Guardando...' : 'Confirmar'}
+                        </Button>
+                      )}
+                    </div>
+                    {emailVerificationStep === 'password' && (
+                      <p className="text-sm text-gray-500 mt-1">
+                        La contraseña debe tener al menos 6 caracteres
+                      </p>
+                    )}
+                  </div>
+                )}
+              </>
+            ) : (
+              /* Login normal - Email y Password */
+              <>
+                <div>
+                  <Label htmlFor="email">Email</Label>
+                  <div className="relative mt-1">
+                    <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                    <Input
+                      id="email"
+                      type="email"
+                      required
+                      className="pl-10 text-gray-900"
+                      placeholder="tu@email.com"
+                      value={formData.email}
+                      onChange={(e) => setFormData({...formData, email: e.target.value})}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <Label htmlFor="password">Contraseña</Label>
+                  <div className="relative mt-1">
+                    <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                    <Input
+                      id="password"
+                      type={showPassword ? 'text' : 'password'}
+                      required
+                      className="pl-10 pr-10 text-gray-900"
+                      placeholder="••••••••"
+                      value={formData.password}
+                      onChange={(e) => setFormData({...formData, password: e.target.value})}
+                    />
+                    <button
+                      type="button"
+                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400"
+                      onClick={() => setShowPassword(!showPassword)}
+                    >
+                      {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Mostrar el botón de registro solo cuando esté completamente verificado o para login */}
+            {(isLogin || emailVerificationStep === 'complete') && (
+              <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700" disabled={isLoading}>
+                {isLoading ? (
+                  <div className="flex items-center justify-center">
+                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Procesando...
+                  </div>
+                ) : (
+                  isLogin ? 'Iniciar Sesión' : 'Crear Cuenta'
+                )}
+              </Button>
+            )}
+            
             {/* Social login icons debajo del botón principal */}
             <div className="flex flex-col items-center mt-6 mb-2">
               <div className="flex gap-8 justify-center">
