@@ -4,6 +4,7 @@ import { DeliveryStatus } from "../lib/models";
 import { db } from "../lib/firebase";
 import { calculateTotal, getProductPrice, getQuotePrice } from "../lib/priceUtils";
 import { getAuth } from "firebase/auth";
+import { solicitudesAPI, SolicitudBackend, geoAPI } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,7 +36,9 @@ import {
   Check,
   Calendar,
   Info,
-  RefreshCw
+  RefreshCw,
+  Calculator,
+  MessageCircle
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import DashboardLayout from "@/components/barraempresa";
@@ -63,6 +66,8 @@ interface Quote {
   requestTitle?: string;
   clientName?: string;
   userId?: string;
+  usuarioNombre?: string;
+  telefono?: string; // Teléfono del usuario para WhatsApp
   totalAmount?: number;
   deliveryTime?: string;
   deliveryStatus?: string;
@@ -149,10 +154,54 @@ const DashboardEmpresas: React.FC = () => {
       if (!user) return;
       
       try {
+        console.log("🔍 Obteniendo datos de empresa desde backend para UID:", user.uid);
+        
+        // Primero obtener datos desde el backend MySQL
+        let backendData = null;
+        try {
+          const response = await fetch(`http://localhost:8090/api/usuarios/firebase/${user.uid}`);
+          if (response.ok) {
+            backendData = await response.json();
+            console.log("📊 Datos del backend obtenidos:", backendData);
+          } else {
+            console.log("⚠️ Usuario no encontrado en backend, usando datos de Firebase");
+          }
+        } catch (backendError) {
+          console.error("❌ Error al obtener datos del backend:", backendError);
+        }
+        
+        // Si tenemos datos del backend, usarlos como prioritarios
+        if (backendData) {
+          console.log("🏗️ Usando datos del backend MySQL");
+          setCompany({
+            name: backendData.nombreCompleto || user.displayName || '',
+            isVerified: backendData.verified || false,
+            verificationRequested: false, // Este campo viene de Firebase
+            verificationDocumentsUploaded: false, // Este campo viene de Firebase
+            verificationStatus: backendData.verified ? 'verified' : 'pending',
+            profileImage: user.photoURL || '',
+            userId: user.uid,
+            hasLocation: Boolean(backendData.ciudad),
+            ubicacion: backendData.ciudad || null
+          });
+          
+          console.log("✅ Estado de company actualizado desde backend:", {
+            hasLocation: Boolean(backendData.ciudad),
+            ubicacion: backendData.ciudad
+          });
+          return;
+        }
+        
+        // Fallback a Firebase si no hay datos en backend
+        console.log("📱 Fallback: obteniendo datos desde Firebase");
         const companyData: CompanyData = await getCompanyData(user.uid);
-        console.log("Datos de la empresa obtenidos:", companyData);
+        console.log("📋 Datos de Firebase obtenidos:", companyData);
         
         if (companyData) {
+          console.log("🏗️ Procesando datos de Firebase...");
+          const ubicacionData = companyData.ubicacion || companyData.location || companyData.ciudad || companyData.city;
+          console.log("📍 Ubicación detectada en Firebase:", ubicacionData);
+          
           setCompany({
             name: companyData.name || companyData.companyName || user.displayName || '',
             isVerified: companyData.isVerified || false,
@@ -161,12 +210,17 @@ const DashboardEmpresas: React.FC = () => {
             verificationStatus: companyData.verificationStatus || '',
             profileImage: companyData.profileImage || companyData.photoURL || '',
             userId: user.uid,
-            hasLocation: Boolean(companyData.ubicacion || companyData.location),
-            ubicacion: companyData.ubicacion || companyData.location || null
+            hasLocation: Boolean(ubicacionData),
+            ubicacion: ubicacionData || null
+          });
+          
+          console.log("✅ Estado de company actualizado desde Firebase:", {
+            hasLocation: Boolean(ubicacionData),
+            ubicacion: ubicacionData
           });
         }
       } catch (error) {
-        console.error("Error al obtener datos de la empresa:", error);
+        console.error("❌ Error al obtener datos de la empresa:", error);
       }
     };
     
@@ -187,6 +241,13 @@ const DashboardEmpresas: React.FC = () => {
   const [completedJobs, setCompletedJobs] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false); // Estado para controlar los botones durante el procesamiento
   const [showInterestedDrivers, setShowInterestedDrivers] = useState(false); // Estado para controlar la visualización de conductores interesados
+
+  // Estados para el selector de ubicación
+  const [cities, setCities] = useState<any[]>([]);
+  const [citiesLoading, setCitiesLoading] = useState(false);
+  const [selectedCityId, setSelectedCityId] = useState<number | null>(null);
+  const [isSavingCity, setIsSavingCity] = useState(false);
+  const [showLocationSelector, setShowLocationSelector] = useState(false);
 
   // Estadísticas para las tarjetas
   const stats = [
@@ -226,6 +287,8 @@ const DashboardEmpresas: React.FC = () => {
 
   // Hook para obtener y guardar la empresa real
   const getCompanyData = async (userId: string) => {
+    console.log("🔍 Buscando datos para userId:", userId);
+    
     // Buscar SIEMPRE en users primero para obtener companyName real
     // Probamos varias consultas para cubrir diferentes estructuras
     let userQueries = [
@@ -238,7 +301,13 @@ const DashboardEmpresas: React.FC = () => {
       const querySnapshot = await getDocs(q);
       if (!querySnapshot.empty) {
         const userData = querySnapshot.docs[0].data();
-        console.log("Datos de usuario encontrados:", userData);
+        console.log("📋 Datos de usuario encontrados:", userData);
+        console.log("🌍 Campos de ubicación en userData:", {
+          ubicacion: userData.ubicacion,
+          location: userData.location,
+          ciudad: userData.ciudad,
+          city: userData.city
+        });
         return {
           ...userData,
           id: querySnapshot.docs[0].id
@@ -257,7 +326,13 @@ const DashboardEmpresas: React.FC = () => {
       const querySnapshot = await getDocs(q);
       if (!querySnapshot.empty) {
         const companyData = querySnapshot.docs[0].data();
-        console.log("Datos de compañía encontrados:", companyData);
+        console.log("🏢 Datos de compañía encontrados:", companyData);
+        console.log("🌍 Campos de ubicación en companyData:", {
+          ubicacion: companyData.ubicacion,
+          location: companyData.location,
+          ciudad: companyData.ciudad,
+          city: companyData.city
+        });
         return {
           ...companyData,
           id: querySnapshot.docs[0].id
@@ -265,8 +340,75 @@ const DashboardEmpresas: React.FC = () => {
       }
     }
 
-    console.warn("No se encontraron datos para el usuario:", userId);
+    console.warn("⚠️ No se encontraron datos para el usuario:", userId);
     return null;
+  };
+  
+  // Nueva función para cargar solicitudes desde el backend filtradas por ciudad
+  const loadQuotesFromBackend = async () => {
+    try {
+      const auth = getAuth();
+      const user = auth.currentUser;
+      if (!user) return;
+
+      console.log("Cargando solicitudes desde backend para:", user.uid, user.displayName);
+
+      // Obtener la ciudad de la empresa para filtrar solicitudes
+      const companyCity = company.ubicacion;
+      console.log("Ciudad de la empresa:", companyCity);
+
+      // Usar backend para obtener solicitudes pendientes filtradas por ciudad
+      const backendSolicitudes = await solicitudesAPI.getPendingSolicitudesByCity(companyCity);
+      console.log("[loadQuotesFromBackend] Solicitudes pendientes desde backend:", backendSolicitudes.length);
+
+      // Mapear las solicitudes del backend al formato esperado por el frontend
+      const mappedSolicitudes = backendSolicitudes.map((solicitud: SolicitudBackend) => {
+        return {
+          id: solicitud.id.toString(),
+          title: solicitud.titulo || "Sin título",
+          requestTitle: solicitud.titulo || "Sin título", 
+          description: `${solicitud.profesion} - ${solicitud.tipo}`,
+          location: solicitud.ubicacion || "",
+          status: "pendiente",
+          deliveryStatus: undefined,
+          createdAt: solicitud.fechaCreacion,
+          userId: solicitud.usuarioId,
+          usuarioNombre: solicitud.usuarioNombre || "Usuario",
+          profesion: solicitud.profesion || "general",
+          tipo: solicitud.tipo || "herramienta",
+          presupuesto: solicitud.presupuesto || 0,
+          items: solicitud.items?.map(item => ({
+            name: item.nombre,
+            cantidad: item.cantidad,
+            especificaciones: item.especificaciones,
+            imagenUrl: item.imagenUrl,
+            precio: item.precio
+          })) || [],
+          products: solicitud.items?.map(item => ({
+            name: item.nombre,
+            quantity: item.cantidad,
+            price: item.precio || 0
+          })) || [],
+          selectedCompanies: [user.uid], // Todas están disponibles para esta empresa
+          source: "backend",
+          // Campos adicionales necesarios para el frontend
+          estadoEmpresa: undefined,
+          activeForCompany: false,
+          deliveryId: undefined,
+          driverId: undefined
+        };
+      });
+
+      console.log("Solicitudes mapeadas desde backend:", mappedSolicitudes.length);
+      
+      setRealQuotes(mappedSolicitudes);
+      setPendingQuotes(mappedSolicitudes);
+      
+    } catch (error) {
+      console.error("Error al cargar solicitudes desde backend:", error);
+      // En caso de error, usar la función original como fallback
+      loadQuotes();
+    }
   };
   
   // Función para cargar solicitudes - accesible desde cualquier parte del componente
@@ -679,7 +821,7 @@ const DashboardEmpresas: React.FC = () => {
     console.log("==========================================");
     console.log("INICIANDO CARGA DE SOLICITUDES Y PEDIDOS");
     console.log("==========================================");
-    loadQuotes();
+    loadQuotesFromBackend();
     
     // Después de cargar las cotizaciones, refrescar pedidos activos con la nueva función
     setTimeout(() => {
@@ -887,6 +1029,171 @@ const DashboardEmpresas: React.FC = () => {
 
     fetchMyQuotes();
   }, []);
+
+  // useEffect para cargar ciudades para el selector
+  useEffect(() => {
+    const loadCities = async () => {
+      try {
+        setCitiesLoading(true);
+        console.log('🌍 Cargando ciudades...');
+        let ciudadesData = await geoAPI.getCiudades();
+        
+        // Si hay muy pocas ciudades (menos de 10), poblar primero las ciudades de Colombia
+        if (!ciudadesData || ciudadesData.length < 10) {
+          console.log('🇨🇴 Pocas ciudades detectadas (' + (ciudadesData?.length || 0) + '), poblando ciudades de Colombia...');
+          try {
+            const colombiaResult = await geoAPI.poblarCiudadesColombia();
+            console.log('✅ Resultado de poblar Colombia:', colombiaResult);
+            
+            // Luego poblar desde usuarios existentes para agregar cualquier ciudad personalizada
+            const usuariosResult = await geoAPI.poblarCiudades();
+            console.log('✅ Resultado de poblar desde usuarios:', usuariosResult);
+            
+            // Recargar ciudades después de poblar
+            ciudadesData = await geoAPI.getCiudades();
+          } catch (poblarError) {
+            console.error('⚠️ Error poblando ciudades:', poblarError);
+            // Continuar con lista actual si falla el poblado
+          }
+        }
+        
+        setCities(ciudadesData || []);
+        console.log('🏙️ Ciudades cargadas:', ciudadesData?.length || 0);
+      } catch (error) {
+        console.error('❌ Error cargando ciudades:', error);
+        setCities([]);
+      } finally {
+        setCitiesLoading(false);
+      }
+    };
+    loadCities();
+  }, []);
+
+  // useEffect para inicializar selectedCityId basado en la ubicación actual de la empresa
+  useEffect(() => {
+    if (company && cities.length > 0) {
+      // Buscar la ciudad por nombre si existe
+      const matched = cities.find(c => c.nombre === company.ubicacion);
+      setSelectedCityId(matched ? matched.id : null);
+      console.log("Ciudad seleccionada inicializada:", matched?.nombre || "Ninguna");
+    }
+  }, [company, cities]);
+
+  // Función para manejar el cambio de ciudad
+  const handleCityChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newCityId = Number(e.target.value) || null;
+    setSelectedCityId(newCityId);
+    
+    try {
+      setIsSavingCity(true);
+      const auth = getAuth();
+      const user = auth.currentUser;
+      
+      if (!user || !company.userId) {
+        console.warn("No se encontró usuario/empresa para actualizar ubicación");
+        return;
+      }
+
+      const newCity = cities.find(c => c.id === newCityId);
+      const newUbicacion = newCity ? newCity.nombre : null;
+      
+      console.log("🔄 Actualizando ubicación a:", newUbicacion);
+
+      // 1. Actualizar en el backend MySQL
+      try {
+        // Primero obtener el usuario del backend para obtener su ID numérico
+        const backendResponse = await fetch(`http://localhost:8090/api/usuarios/firebase/${user.uid}`);
+        if (backendResponse.ok) {
+          const backendUser = await backendResponse.json();
+          console.log("📊 Usuario encontrado en backend:", backendUser);
+          
+          // Actualizar ubicación en backend
+          await geoAPI.updateUsuarioUbicacion(backendUser.id, newCityId || undefined, newUbicacion);
+          console.log("✅ Backend actualizado correctamente");
+        } else {
+          console.warn("⚠️ Usuario no encontrado en backend, solo se actualizará Firebase");
+        }
+      } catch (backendError) {
+        console.error("❌ Error actualizando backend:", backendError);
+      }
+
+      // 2. Actualizar en Firebase
+      try {
+        const userDoc = await getCompanyData(user.uid);
+        if (userDoc && userDoc.id) {
+          // Determinar qué colección usar
+          const userQueries = [
+            query(collection(db, "users"), where("uid", "==", user.uid)),
+            query(collection(db, "companies"), where("uid", "==", user.uid))
+          ];
+
+          for (const q of userQueries) {
+            const querySnapshot = await getDocs(q);
+            if (!querySnapshot.empty) {
+              const docRef = doc(db, querySnapshot.docs[0].ref.parent.path, querySnapshot.docs[0].id);
+              await updateDoc(docRef, {
+                ciudad: newUbicacion,
+                ubicacion: newUbicacion
+              });
+              console.log("✅ Firebase actualizado correctamente");
+              break;
+            }
+          }
+        }
+      } catch (firebaseError) {
+        console.error("❌ Error actualizando Firebase:", firebaseError);
+      }
+      
+      // 3. Actualizar estado local inmediatamente
+      setCompany(prev => ({ 
+        ...prev, 
+        ubicacion: newUbicacion,
+        hasLocation: Boolean(newUbicacion)
+      }));
+      
+      console.log("✅ Ubicación actualizada exitosamente a:", newUbicacion);
+      
+      // Recargar solicitudes con la nueva ciudad
+      setTimeout(() => {
+        loadQuotesFromBackend();
+      }, 500);
+      
+    } catch (error) {
+      console.error("❌ Error general actualizando ubicación:", error);
+      // Revertir selección en caso de error
+      const currentCity = cities.find(c => c.nombre === company.ubicacion);
+      setSelectedCityId(currentCity ? currentCity.id : null);
+    } finally {
+      setIsSavingCity(false);
+      setShowLocationSelector(false);
+    }
+  };
+
+  // Función auxiliar para obtener usuario de Firebase con ID numérico
+  const getUserFromFirebase = async (firebaseUid: string) => {
+    try {
+      // Buscar en users primero
+      const userQueries = [
+        query(collection(db, "users"), where("uid", "==", firebaseUid)),
+        query(collection(db, "users"), where("firebaseUid", "==", firebaseUid))
+      ];
+
+      for (const q of userQueries) {
+        const snapshot = await getDocs(q);
+        if (!snapshot.empty) {
+          const userData = snapshot.docs[0].data();
+          return {
+            id: userData.id || snapshot.docs[0].id,
+            ...userData
+          };
+        }
+      }
+      return null;
+    } catch (error) {
+      console.error("Error obteniendo usuario:", error);
+      return null;
+    }
+  };
 
   // Nuevo useEffect para cargar comentarios
   useEffect(() => {
@@ -1982,15 +2289,87 @@ const DashboardEmpresas: React.FC = () => {
                   )}
                   
                   {company.hasLocation ? (
-                    <Badge className="bg-green-300/30 hover:bg-green-300/40 text-white border-none px-2 py-1">
-                      <MapPin className="h-3 w-3 mr-1" />
-                      Ubicación configurada
-                    </Badge>
+                    <div className="flex items-center gap-2">
+                      {!showLocationSelector ? (
+                        <Badge 
+                          className="bg-green-300/30 hover:bg-green-300/40 text-white border-none px-2 py-1 cursor-pointer"
+                          onClick={() => setShowLocationSelector(true)}
+                        >
+                          <MapPin className="h-3 w-3 mr-1" />
+                          {company.ubicacion || "Ubicación configurada"} - Hacer clic para cambiar
+                        </Badge>
+                      ) : (
+                        <div className="flex items-center gap-2 bg-white/20 backdrop-blur-sm rounded-lg px-3 py-2">
+                          <MapPin className="h-4 w-4 text-white" />
+                          <select
+                            value={selectedCityId ?? ""}
+                            onChange={handleCityChange}
+                            disabled={isSavingCity || citiesLoading}
+                            className="bg-white text-gray-900 border border-gray-300 rounded px-2 py-1 text-sm min-w-[150px] focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          >
+                            <option value="">Seleccionar ciudad...</option>
+                            {cities.map(city => (
+                              <option key={city.id} value={city.id}>
+                                {city.nombre}
+                              </option>
+                            ))}
+                          </select>
+                          {isSavingCity && (
+                            <RefreshCw className="h-4 w-4 text-white animate-spin" />
+                          )}
+                          <button
+                            onClick={() => setShowLocationSelector(false)}
+                            className="text-white hover:text-gray-200 p-1"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   ) : (
-                    <Badge variant="outline" className="bg-amber-500/20 hover:bg-amber-500/30 border-amber-300/50 text-white px-2 py-1">
-                      <MapPin className="h-3 w-3 mr-1" />
-                      Sin ubicación
-                    </Badge>
+                    <div className="flex items-center gap-2">
+                      {!showLocationSelector ? (
+                        <Badge 
+                          variant="outline" 
+                          className="bg-amber-500/20 hover:bg-amber-500/30 border-amber-300/50 text-white px-2 py-1 cursor-pointer"
+                          onClick={() => setShowLocationSelector(true)}
+                        >
+                          <MapPin className="h-3 w-3 mr-1" />
+                          Sin ubicación - Hacer clic para configurar
+                        </Badge>
+                      ) : (
+                        <div className="flex items-center gap-2 bg-white/20 backdrop-blur-sm rounded-lg px-3 py-2">
+                          <MapPin className="h-4 w-4 text-white" />
+                          <select
+                            value={selectedCityId ?? ""}
+                            onChange={handleCityChange}
+                            disabled={isSavingCity}
+                            className="bg-white text-gray-900 border border-gray-300 rounded px-2 py-1 text-sm min-w-[150px] focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          >
+                            <option value="">Seleccionar ciudad...</option>
+                            {cities.map(city => (
+                              <option key={city.id} value={city.id}>
+                                {city.nombre}
+                              </option>
+                            ))}
+                          </select>
+                          {isSavingCity && (
+                            <div className="text-white text-xs flex items-center gap-1">
+                              <RefreshCw className="h-3 w-3 animate-spin" />
+                              Guardando...
+                            </div>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setShowLocationSelector(false)}
+                            className="text-white hover:bg-white/20 p-1 h-auto"
+                          >
+                            <X className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
@@ -2156,7 +2535,7 @@ const DashboardEmpresas: React.FC = () => {
                               {/* Ya no necesitamos este badge porque ya tenemos otro que muestra lo mismo arriba */}
                             </div>
                             <p className="text-xs text-gray-500">
-                              Cliente: {quote.clientName || quote.userId || "Cliente"}
+                              Cliente: {quote.usuarioNombre || quote.clientName || "Cliente Anónimo"}
                             </p>
                           </div>
                         </div>
@@ -2537,7 +2916,7 @@ const DashboardEmpresas: React.FC = () => {
                               </Badge>
                             </div>
                             <p className="text-xs text-gray-500">
-                              Cliente: {quote.clientName || quote.userId || "Cliente"}
+                              Cliente: {quote.usuarioNombre || quote.clientName || "Cliente Anónimo"}
                             </p>
                           </div>
                         </div>
@@ -2712,7 +3091,7 @@ const DashboardEmpresas: React.FC = () => {
                             {quote.title || quote.requestTitle || "Solicitud de Cotización"}
                           </h3>
                           <p className="text-xs text-gray-500 mb-1">
-                            Cliente: {quote.clientName || quote.userId || "Cliente"}
+                            Cliente: {quote.usuarioNombre || quote.clientName || "Cliente Anónimo"}
                           </p>
                           <div className="flex flex-wrap gap-1 mb-2">
                             <Badge variant="outline" className="text-xs px-1.5 py-0.5 bg-blue-50 text-blue-700 border-blue-200">
@@ -2858,16 +3237,17 @@ const DashboardEmpresas: React.FC = () => {
                         <Button
                           size="sm"
                           variant="outline"
-                          className="bg-white border-gray-200 text-red-600 hover:bg-red-50 hover:text-red-700 hover:border-red-200 text-xs font-medium px-3 py-2 h-auto rounded-lg flex-1 sm:flex-none flex items-center justify-center transition-all duration-200"
+                          className="bg-white border-blue-200 text-blue-600 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-300 text-xs font-medium px-3 py-2 h-auto rounded-lg flex-1 sm:flex-none flex items-center justify-center transition-all duration-200"
                           onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            handleDenyQuote(quote.id);
+                            // Función para crear cotización
+                            navigate(`/backoffice/quote-proposal?id=${quote.id}`);
                           }}
                           disabled={isProcessing}
                         >
-                          <X className="h-3.5 w-3.5 mr-1.5" />
-                          Rechazar
+                          <Calculator className="h-3.5 w-3.5 mr-1.5" />
+                          Cotización
                         </Button>
                         <Button
                           size="sm"
@@ -2875,13 +3255,21 @@ const DashboardEmpresas: React.FC = () => {
                           onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            handleConfirmQuote(quote.id);
+                            // Función para abrir WhatsApp
+                            const clientPhone = quote.telefono || quote.clientPhone || "";
+                            if (clientPhone) {
+                              const whatsappMessage = `Hola! Soy de ${company?.name || 'nuestra empresa'}. He visto tu solicitud de transporte y me gustaría ayudarte. ¿Podemos hablar sobre los detalles?`;
+                              const whatsappUrl = `https://wa.me/${clientPhone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(whatsappMessage)}`;
+                              window.open(whatsappUrl, '_blank');
+                            } else {
+                              alert('No se encontró el número de teléfono del cliente');
+                            }
                           }}
                           disabled={isProcessing}
                         >
                           <span className="absolute inset-0 w-full h-full bg-gradient-to-r from-green-400 to-green-500 opacity-0 group-hover:opacity-10 transition-opacity duration-300"></span>
-                          <Check className="h-3.5 w-3.5 mr-2 transition-transform group-hover:scale-110" />
-                          <span className="relative z-10">Aceptar</span>
+                          <MessageCircle className="h-3.5 w-3.5 mr-2 transition-transform group-hover:scale-110" />
+                          <span className="relative z-10">Ir a WhatsApp</span>
                         </Button>
                       </div>
                     </div>

@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { getAuth, onAuthStateChanged } from 'firebase/auth';
 import { db } from '../lib/firebase';
 import { collection, query, where, orderBy, getDocs, doc, setDoc } from 'firebase/firestore';
+import { solicitudesAPI } from '../lib/api';
 
 
 const Index = () => {
@@ -23,33 +24,36 @@ const Index = () => {
   const [loadingUserData, setLoadingUserData] = useState(true);
 
   // Estado para saludo
-  // Redirección robusta para empresas
+  // Redirección robusta para empresas - consultando backend MySQL
   useEffect(() => {
     const auth = getAuth();
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!user) return;
-      // Buscar en users si el usuario es empresa
-      const userRef = collection(db, "users");
-      const userQuery = query(userRef, where("uid", "==", user.uid));
-      const userSnap = await getDocs(userQuery);
-      let isCompany = false;
-      if (!userSnap.empty) {
-        const userData = userSnap.docs[0].data();
-        if (userData.role === "empresa" || userData.tipo === "empresa" || userData.isCompany) {
-          isCompany = true;
+      
+      try {
+        console.log("🔍 Verificando tipo de usuario en backend para UID:", user.uid);
+        
+        // Consultar backend para obtener datos del usuario
+        const response = await fetch(`http://localhost:8090/api/usuarios/firebase/${user.uid}`);
+        
+        if (response.ok) {
+          const userData = await response.json();
+          console.log("👤 Datos del usuario desde backend:", userData);
+          
+          // Verificar si es empresa basado en userType del backend
+          if (userData.userType === "empresa" || userData.userType === "company") {
+            console.log("🏢 Usuario identificado como empresa, redirigiendo a backoffice");
+            window.location.replace("/backoffice");
+            return;
+          } else {
+            console.log("👥 Usuario identificado como cliente normal");
+          }
+        } else {
+          console.log("⚠️ Usuario no encontrado en backend, permitiendo acceso normal");
         }
-      }
-      // Buscar en empresas por si acaso
-      if (!isCompany) {
-        const empresaRef = collection(db, "empresas");
-        const empresaQuery = query(empresaRef, where("userId", "==", user.uid));
-        const empresaSnap = await getDocs(empresaQuery);
-        if (!empresaSnap.empty) {
-          isCompany = true;
-        }
-      }
-      if (isCompany) {
-        window.location.replace("/backoffice");
+      } catch (error) {
+        console.error("❌ Error al verificar tipo de usuario:", error);
+        // En caso de error, permitir continuar como usuario normal
       }
     });
     return () => unsubscribe && unsubscribe();
@@ -129,91 +133,74 @@ const Index = () => {
           setLoadingRequests(false);
           return;
         }
-        // 1. Buscar solicitudes del usuario
-        const q = query(
-          collection(db, 'solicitud'),
-          where('userId', '==', user.uid)
-        );
-        const snapshot = await getDocs(q);
-        const requests = snapshot.docs.map(doc => {
-          const data = doc.data();
-          let budget = 0;
-          if (typeof data.budget === 'string') {
-            budget = data.budget.trim() === '' ? 0 : parseInt(data.budget, 10) || 0;
-          } else if (typeof data.budget === 'number') {
-            budget = data.budget;
-          }
-          let createdAt = typeof data.createdAt === 'string' && data.createdAt
-            ? data.createdAt
-            : new Date().toISOString();
-          let items = Array.isArray(data.items) ? data.items : [];
-          return {
-            id: doc.id,
-            status: data.status ?? "pendiente",
-            title: data.title ?? "Sin título",
-            items,
-            userId: data.userId ?? "",
-            profession: data.profession ?? "general",
-            location: data.location ?? "No especificada",
-            urgency: data.urgency ?? "media",
-            budget,
-            createdAt,
-            quotesCount: 0, // Se actualizará abajo
-            description: data.description ?? "",
-            estado: data.estado ?? "",
-            deliveryStatus: data.deliveryStatus ?? ""
-          };
-        });
-        // 2. Obtener el número real de cotizaciones por solicitud
-        for (const req of requests) {
-          const quotesSnapshot = await getDocs(query(
-            collection(db, 'cotizaciones'),
-            where('requestId', '==', req.id)
-          ));
-          req.quotesCount = quotesSnapshot.size;
-        }
+
+        // 1. Cargar solicitudes del backend
+        console.log("Cargando solicitudes del backend para dashboard...");
+        const backendSolicitudes = await solicitudesAPI.getUserSolicitudes(user.uid);
+        console.log(`Dashboard: Cargadas ${backendSolicitudes.length} solicitudes del backend`);
+        
+        // 2. Convertir al formato esperado por el dashboard
+        const requests = backendSolicitudes.map(solicitud => ({
+          id: `backend_${solicitud.id}`,
+          status: solicitud.estado || "pendiente",
+          title: solicitud.titulo || "Sin título",
+          items: solicitud.items.map(item => ({
+            id: item.id?.toString() || '',
+            name: item.nombre,
+            quantity: item.cantidad,
+            specifications: item.especificaciones || '',
+            price: item.precio || 0
+          })),
+          userId: solicitud.usuarioId,
+          profession: solicitud.profesion || "general",
+          location: solicitud.ubicacion || "No especificada", 
+          urgency: "media", // Valor por defecto
+          budget: solicitud.presupuesto || 0,
+          createdAt: solicitud.fechaCreacion,
+          quotesCount: 0, // Por ahora, implementar cotizaciones más adelante
+          description: "",
+          estado: solicitud.estado || "",
+          deliveryStatus: ""
+        }));
+
         setRecentRequests(requests);
-        // Pedidos completados: solicitudes del usuario con deliveryStatus === 'entregado'
+
+        // 3. Actualizar estadísticas
+        const activeRequestsCount = requests.filter(
+          r => r.status === 'cotizando' || r.status === 'pendiente'
+        ).length;
+        
         const completedOrdersCount = requests.filter(
           r => r.deliveryStatus === 'entregado'
         ).length;
-        // Actualizar puntos en el documento de usuario
+
+        setUserStats(prev => ({
+          ...prev,
+          activeRequests: activeRequestsCount,
+          completedOrders: completedOrdersCount,
+          points: completedOrdersCount * 50
+        }));
+
+        // 4. Actualizar puntos en Firebase (para mantener compatibilidad)
         try {
           const userRef = doc(db, 'users', user.uid);
           await setDoc(userRef, { points: completedOrdersCount * 50 }, { merge: true });
         } catch (err) {
           console.error('Error actualizando puntos:', err);
         }
-        // En desarrollo usaremos un valor fijo para facilitar el desarrollo
-        if (process.env.NODE_ENV === 'development') {
-          setUserStats(prev => ({
-            ...prev,
-            activeRequests: 3, // Valor fijo para desarrollo
-            completedOrders: completedOrdersCount,
-            points: completedOrdersCount * 50
-          }));
-        } else {
-          // En producción, usamos el filtro correcto: status === "cotizando"
-          setUserStats(prev => ({
-            ...prev,
-            // Solo status === 'cotizando' cuenta como solicitud activa
-            activeRequests: requests.filter(
-              r => typeof r.status === 'string' && r.status.toLowerCase() === 'cotizando'
-            ).length,
-            completedOrders: completedOrdersCount,
-            points: completedOrdersCount * 50
-          }));
-        }
-      } catch (e) {
+
+      } catch (error) {
+        console.error('Error cargando solicitudes del backend:', error);
         setRecentRequests([]);
         setUserStats(prev => ({ ...prev, activeRequests: 0, completedOrders: 0 }));
-        console.error('Error trayendo solicitudes o pedidos:', e);
       }
       setLoadingRequests(false);
     };
+
     unsubscribe = onAuthStateChanged(auth, (user) => {
       fetchData(user);
     });
+
     return () => {
       if (unsubscribe) unsubscribe();
     };

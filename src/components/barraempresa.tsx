@@ -24,7 +24,8 @@ import {
   X,
   Building2,
   CreditCard,
-  LifeBuoy
+  LifeBuoy,
+  CheckCircle
 } from "lucide-react";
 import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
 import { db } from "../lib/firebase";
@@ -139,6 +140,7 @@ const logout = async () => {
 
   const navigationItems = [
     { to: "/backoffice", icon: Home, label: "Dashboard", shortLabel: "Inicio", end: true },
+    { to: "/backoffice/cotizadas", icon: CheckCircle, label: "Cotizadas", shortLabel: "Cotizadas" },
     { to: "/backoffice/messages", icon: MessageSquare, label: "Mensajes", shortLabel: "Mensajes" },
     { to: "/backoffice/profile", icon: User, label: "Perfil de Empresa", shortLabel: "Perfil" },
     { to: "/backoffice/reviews", icon: Star, label: "Reseñas y Comentarios", shortLabel: "Reseñas" },

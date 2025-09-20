@@ -10,7 +10,7 @@
         <version>3.2.0</version>
         <relativePath/>
     </parent>
-    
+
     <groupId>com.ferry77</groupId>
     <artifactId>ferry77-backend</artifactId>
     <version>1.0.0</version>
@@ -97,6 +97,19 @@
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-lang3</artifactId>
             <version>3.12.0</version>
+        </dependency>
+        
+        <!-- Kafka para notificaciones escalables -->
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka</artifactId>
+            <version>3.1.4</version>
+        </dependency>
+        
+        <!-- Jackson para serialización JSON -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
         </dependency>
         
         <!-- Testing -->

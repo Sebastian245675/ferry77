@@ -137,4 +137,83 @@ public class UsuarioController {
             return ResponseEntity.badRequest().body(Map.of("error", "Error estableciendo contraseña: " + e.getMessage()));
         }
     }
+    
+    // Endpoint para buscar usuario por email
+    @GetMapping("/email/{email}")
+    public ResponseEntity<Usuario> getUsuarioByEmail(@PathVariable String email) {
+        try {
+            Usuario usuario = usuarioRepository.findByEmail(email);
+            if (usuario != null) {
+                System.out.println("[EMAIL_SEARCH] Usuario encontrado: " + usuario.getEmail() + " - Tipo: " + usuario.getUserType());
+                return ResponseEntity.ok(usuario);
+            } else {
+                System.out.println("[EMAIL_SEARCH] Usuario no encontrado para email: " + email);
+                return ResponseEntity.notFound().build();
+            }
+        } catch (Exception e) {
+            System.err.println("[ERROR] Error buscando usuario por email: " + e.getMessage());
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    // Endpoint para buscar usuario por ID numérico
+    @GetMapping("/{id}")
+    public ResponseEntity<Usuario> getUsuarioById(@PathVariable Long id) {
+        try {
+            var usuario = usuarioRepository.findById(id);
+            if (usuario.isPresent()) {
+                System.out.println("[ID_SEARCH] Usuario encontrado: " + usuario.get().getEmail() + " - Tipo: " + usuario.get().getUserType());
+                return ResponseEntity.ok(usuario.get());
+            } else {
+                System.out.println("[ID_SEARCH] Usuario no encontrado para ID: " + id);
+                return ResponseEntity.notFound().build();
+            }
+        } catch (Exception e) {
+            System.err.println("[ERROR] Error buscando usuario por ID: " + e.getMessage());
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    // Endpoint para sincronizar usuario de Firebase con MySQL
+    @PostMapping("/sync-firebase")
+    public ResponseEntity<?> syncFirebaseUser(@RequestBody Map<String, Object> firebaseUser) {
+        try {
+            String firebaseUid = (String) firebaseUser.get("uid");
+            String email = (String) firebaseUser.get("email");
+            String displayName = (String) firebaseUser.get("displayName");
+            String userType = (String) firebaseUser.get("userType");
+            String companyName = (String) firebaseUser.get("companyName");
+            String nick = (String) firebaseUser.get("nick");
+
+            System.out.println("[SYNC] Sincronizando usuario Firebase: " + firebaseUid);
+
+            // Verificar si ya existe
+            Usuario existingUser = usuarioRepository.findByFirebaseUid(firebaseUid);
+            
+            if (existingUser != null) {
+                System.out.println("[SYNC] Usuario ya existe con ID: " + existingUser.getId());
+                return ResponseEntity.ok(existingUser);
+            }
+
+            // Crear nuevo usuario
+            Usuario usuario = new Usuario();
+            usuario.setFirebaseUid(firebaseUid);
+            usuario.setEmail(email);
+            usuario.setNombreCompleto(displayName != null ? displayName : "Usuario");
+            usuario.setTelefono("Temporal"); // Campo requerido
+            usuario.setUserType(userType != null ? userType : "cliente");
+            usuario.setCompanyName(companyName);
+            usuario.setNick(nick);
+            usuario.setVerified(true); // Usuario viene de Firebase ya autenticado
+
+            Usuario savedUser = usuarioRepository.save(usuario);
+            System.out.println("[SYNC] Usuario creado con ID: " + savedUser.getId());
+            
+            return ResponseEntity.ok(savedUser);
+
+        } catch (Exception e) {
+            System.err.println("[ERROR] Error sincronizando usuario Firebase: " + e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", "Error sincronizando usuario: " + e.getMessage()));
+        }
+    }
 }

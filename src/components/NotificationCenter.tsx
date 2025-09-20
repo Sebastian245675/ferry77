@@ -1,23 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { Bell, X, MessageSquare, Star, Clock, CheckCircle, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { collection, onSnapshot, updateDoc, doc, writeBatch, query, where } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
 import { useNavigate } from 'react-router-dom';
 import { getAuth } from 'firebase/auth';
 
 interface Notification {
   id: string;
-  title: string;
-  message: string;
-  type: string;
-  company?: string;
-  read: boolean;
-  action?: string;
-  actionParams?: Record<string, string>;
-  timestamp: any;
+  titulo: string;
+  mensaje: string;
+  tipo: string;
+  empresa?: string;
+  leida: boolean;
+  usuarioId: string;
+  referenciaId?: string;
+  createdAt: string;
   time?: string;
-  userId: string;
 }
 
 const NotificationCenter = () => {
@@ -30,53 +27,65 @@ const NotificationCenter = () => {
     const user = auth.currentUser;
     if (!user) return;
 
-    // Solo obtener notificaciones del usuario actual
-    const notificationsQuery = query(
-      collection(db, 'notifications'),
-      where('userId', '==', user.uid)
-    );
-    
-    const unsubscribe = onSnapshot(notificationsQuery, (snapshot) => {
-      const fetchedNotifications = snapshot.docs.map(doc => {
-        const data = doc.data();
-        // Convertir el timestamp de Firestore a fecha
-        const timestamp = data.timestamp?.toDate?.() ? data.timestamp.toDate() : new Date();
-        const now = new Date();
-        const diffMs = now.getTime() - timestamp.getTime();
-        
-        let timeString = '';
-        if (diffMs < 60000) { // menos de 1 minuto
-          timeString = 'Ahora mismo';
-        } else if (diffMs < 3600000) { // menos de 1 hora
-          timeString = `${Math.floor(diffMs / 60000)} min`;
-        } else if (diffMs < 86400000) { // menos de 1 día
-          timeString = `${Math.floor(diffMs / 3600000)} h`;
-        } else { // más de 1 día
-          timeString = `${Math.floor(diffMs / 86400000)} d`;
+    // Cargar notificaciones desde el backend
+    const fetchNotifications = async () => {
+      try {
+        const response = await fetch(`http://localhost:8090/api/usuarios/${user.uid}/notifications?page=0&size=20`);
+        if (response.ok) {
+          const data = await response.json();
+          
+          // Convertir las notificaciones del backend al formato del frontend
+          const fetchedNotifications = data.content.map((notif: any) => {
+            const now = new Date();
+            const createdAt = new Date(notif.createdAt);
+            const diffMs = now.getTime() - createdAt.getTime();
+            
+            let timeString = '';
+            if (diffMs < 60000) { // menos de 1 minuto
+              timeString = 'Ahora mismo';
+            } else if (diffMs < 3600000) { // menos de 1 hora
+              timeString = `${Math.floor(diffMs / 60000)} min`;
+            } else if (diffMs < 86400000) { // menos de 1 día
+              timeString = `${Math.floor(diffMs / 3600000)} h`;
+            } else { // más de 1 día
+              timeString = `${Math.floor(diffMs / 86400000)} d`;
+            }
+            
+            return {
+              id: notif.id.toString(),
+              titulo: notif.titulo,
+              mensaje: notif.mensaje,
+              tipo: notif.tipo,
+              empresa: notif.empresa,
+              leida: notif.leida,
+              usuarioId: notif.usuarioId,
+              referenciaId: notif.referenciaId,
+              createdAt: notif.createdAt,
+              time: timeString
+            } as Notification;
+          });
+          
+          setNotifications(fetchedNotifications);
+        } else {
+          console.error('Error al cargar notificaciones:', response.statusText);
         }
-        
-        return { 
-          id: doc.id, 
-          ...data as Omit<Notification, 'id'>,
-          time: timeString
-        } as Notification;
-      });
-      
-      // Ordenar notificaciones por timestamp (más recientes primero)
-      fetchedNotifications.sort((a, b) => {
-        const dateA = a.timestamp?.toDate?.() ? a.timestamp.toDate().getTime() : new Date().getTime();
-        const dateB = b.timestamp?.toDate?.() ? b.timestamp.toDate().getTime() : new Date().getTime();
-        return dateB - dateA;
-      });
-      
-      setNotifications(fetchedNotifications);
-    });
+      } catch (error) {
+        console.error('Error al cargar notificaciones:', error);
+      }
+    };
 
-    return () => unsubscribe();
+    fetchNotifications();
+    
+    // Actualizar cada 30 segundos
+    const interval = setInterval(fetchNotifications, 30000);
+    
+    return () => clearInterval(interval);
   }, [auth.currentUser]);
 
-  const getNotificationIcon = (type) => {
+  const getNotificationIcon = (type: string) => {
     switch (type) {
+      case 'proposal_created':
+        return <MessageSquare className="w-5 h-5 text-green-500" />;
       case 'quote':
         return <MessageSquare className="w-5 h-5 text-green-500" />;
       case 'message':
@@ -90,91 +99,87 @@ const NotificationCenter = () => {
     }
   };
 
-  const markAsRead = async (notificationId) => {
-    const notificationRef = doc(db, 'notifications', notificationId);
-    await updateDoc(notificationRef, { read: true });
-    setNotifications(notifications.map(notif => 
-      notif.id === notificationId ? { ...notif, read: true } : notif
-    ));
+  const markAsRead = async (notificationId: string) => {
+    try {
+      const response = await fetch(`http://localhost:8090/api/notifications/${notificationId}/read`, {
+        method: 'PUT'
+      });
+      
+      if (response.ok) {
+        setNotifications(notifications.map(notif => 
+          notif.id === notificationId ? { ...notif, leida: true } : notif
+        ));
+      }
+    } catch (error) {
+      console.error('Error al marcar notificación como leída:', error);
+    }
   };
 
   const markAllAsRead = async () => {
-    const unreadNotifications = notifications.filter(notif => !notif.read);
-    const batch = writeBatch(db);
-
-    unreadNotifications.forEach(notif => {
-      const notificationRef = doc(db, 'notifications', notif.id);
-      batch.update(notificationRef, { read: true });
-    });
-
-    await batch.commit();
-    setNotifications(notifications.map(notif => ({ ...notif, read: true })));
+    const user = auth.currentUser;
+    if (!user) return;
+    
+    try {
+      const response = await fetch(`http://localhost:8090/api/usuarios/${user.uid}/notifications/read-all`, {
+        method: 'PUT'
+      });
+      
+      if (response.ok) {
+        setNotifications(notifications.map(notif => ({ ...notif, leida: true })));
+      }
+    } catch (error) {
+      console.error('Error al marcar todas las notificaciones como leídas:', error);
+    }
   };
 
   const handleNotificationClick = (notification: Notification) => {
+    // Marcar como leída al hacer clic
     markAsRead(notification.id);
     
     // Cerrar el panel de notificaciones
     setIsOpen(false);
     
-    // Navegar según el tipo de acción
-    if (notification.action && notification.actionParams) {
-      switch (notification.action) {
-        // Eliminado: navegación a cotizaciones
-        case 'view_message':
-          navigate(`/messages?chatId=${notification.actionParams.chatId}`);
-          break;
-        case 'view_request':
-          navigate(`/requests?id=${notification.actionParams.requestId}`);
-          break;
-        case 'track_delivery':
-          navigate(`/order-status?id=${notification.actionParams.orderId}`);
-          break;
-        default:
-          // Para cualquier otra acción no especificada
-          if (notification.actionParams.url) {
-            navigate(notification.actionParams.url);
-          }
-      }
-    } else if (notification.type) {
-      // Navegación basada solo en tipo si no hay acción específica
-      switch (notification.type) {
-        // Eliminado: navegación a cotizaciones
-        case 'message':
-          navigate('/messages');
-          break;
-        case 'status':
-          navigate('/requests');
-          break;
-        case 'delivery':
-          navigate('/orders');
-          break;
-        default:
-          navigate('/dashboard');
-      }
+    // Navegar según el tipo de notificación
+    switch (notification.tipo) {
+      case 'proposal_created':
+        // Si tiene referenciaId (ID de la propuesta), navegar a detalles específicos
+        if (notification.referenciaId) {
+          navigate(`/cotizacion-detalle/${notification.referenciaId}`);
+        } else {
+          // Si no tiene referenciaId, ir a la lista general de cotizaciones
+          navigate('/quotes');
+        }
+        break;
+      case 'message':
+        navigate('/messages');
+        break;
+      case 'delivery':
+        navigate('/deliveries');
+        break;
+      default:
+        // Para otros tipos no hacer nada específico
+        break;
     }
   };
 
-  const unreadCount = notifications.filter(n => !n.read).length;
+  const unreadCount = notifications.filter(notif => !notif.leida).length;
 
   return (
     <div className="relative">
-      {/* Bell Icon */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="relative p-2 text-gray-600 hover:text-blue-600 transition-colors"
+        className="relative p-2 text-gray-600 hover:text-gray-900 transition-colors"
       >
         <Bell size={20} />
         {unreadCount > 0 && (
-          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-            {unreadCount}
+          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-bold">
+            {unreadCount > 99 ? '99+' : unreadCount}
           </span>
         )}
       </button>
 
-      {/* Notification Panel */}
       {isOpen && (
-        <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-lg shadow-xl ring-1 ring-black ring-opacity-5 z-50">
+        <div className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-lg border z-50">
           <div className="p-4 border-b">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-semibold text-gray-900">Notificaciones</h3>
@@ -194,31 +199,31 @@ const NotificationCenter = () => {
                   key={notification.id}
                   onClick={() => handleNotificationClick(notification)}
                   className={`p-4 border-b hover:bg-gray-50 cursor-pointer transition-colors ${
-                    !notification.read ? 'bg-blue-50' : ''
+                    !notification.leida ? 'bg-blue-50' : ''
                   }`}
                 >
                   <div className="flex items-start space-x-3">
                     <div className="flex-shrink-0 mt-1">
-                      {getNotificationIcon(notification.type)}
+                      {getNotificationIcon(notification.tipo)}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between">
                         <p className="text-sm font-medium text-gray-900 truncate">
-                          {notification.title}
+                          {notification.titulo}
                         </p>
                         <span className="text-xs text-gray-500 flex-shrink-0">
                           {notification.time}
                         </span>
                       </div>
                       <p className="text-sm text-gray-600 mt-1 line-clamp-2">
-                        {notification.message}
+                        {notification.mensaje}
                       </p>
-                      {notification.company && (
+                      {notification.empresa && (
                         <p className="text-xs text-blue-600 mt-1 font-medium">
-                          {notification.company}
+                          {notification.empresa}
                         </p>
                       )}
-                      {!notification.read && (
+                      {!notification.leida && (
                         <div className="w-2 h-2 bg-blue-500 rounded-full mt-2"></div>
                       )}
                     </div>

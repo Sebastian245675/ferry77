@@ -22,6 +22,10 @@ import QuoteProposal from "./backoficce/QuoteProposal";
 import PendingQuotes from "./backoficce/PendingQuotes";
 import FormularioSupremo from "./pages/FormularioSupremo";
 import Reviews from "./backoficce/Reviews";
+import Cotizadas from "./pages/Cotizadas";
+import ProposalDetail from "./pages/ProposalDetail";
+import SolicitudCotizaciones from "./pages/SolicitudCotizaciones";
+import CotizacionDetalle from "./pages/CotizacionDetalle";
 import ProfilePage from "./pages/Profile";
 import Pagos from "./backoficce/Pagos";
 import InventoryManager from "./pages/InventoryManager";
@@ -50,11 +54,15 @@ import { onAuthStateChanged } from "firebase/auth";
 import { auth } from "./lib/firebase";
 import { useEffect, useState } from "react";
 import { getThemePreference } from "./theme-utils";
+import { useWebSocketNotifications } from "@/hooks/useWebSocketNotifications";
 
 const App = () => {
   const [authChecked, setAuthChecked] = useState(false);
   const [user, setUser] = useState(null);
   const [themeClass, setThemeClass] = useState(getThemePreference()); // Obtener preferencia de tema
+  
+  // Hook para manejar notificaciones WebSocket
+  useWebSocketNotifications();
 
   useEffect(() => {
     // Comprobar si hay datos de autenticación guardados en localStorage
@@ -184,12 +192,16 @@ const App = () => {
                 <Route path="/companies" element={<Companies />} />
                 <Route path="/company-profile" element={<CompanyProfile />} />
                 <Route path="/requests" element={<Requests />} />
+                <Route path="/cotizaciones/:solicitudId" element={<SolicitudCotizaciones />} />
+                <Route path="/cotizacion-detalle/:proposalId" element={<CotizacionDetalle />} />
                 <Route path="/new-request" element={<NewRequest />} />
                 <Route path="/quotes" element={<Quotes />} />
                 <Route path="/help" element={<Help />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/profile" element={<ProfilePage />} />
                 <Route path="/backoffice" element={<DashboardEmpresas />} />
+                <Route path="/backoffice/cotizadas" element={<Cotizadas />} />
+                <Route path="/backoffice/proposal-detail" element={<ProposalDetail />} />
                 <Route path="/backoffice/profile" element={<Profile />} />
                 <Route path="/backoffice/verification" element={<Verification />} />
                 <Route path="/backoffice/quotes" element={<PendingQuotes />} />
@@ -219,6 +231,9 @@ const App = () => {
           </Routes>
         </BrowserRouter>
         </div>
+        
+        <Toaster />
+        <Sonner />
       </TooltipProvider>
     </QueryClientProvider>
   );

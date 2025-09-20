@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { getAuth } from "firebase/auth";
 import { collection, query, where, getDocs, onSnapshot, updateDoc, doc, addDoc, getDoc } from "firebase/firestore";
 import { db } from "../lib/firebase";
+import { solicitudesAPI, SolicitudBackend } from "../lib/api";
 import Navbar from '../components/Navbar';
 import BottomNavigation from '../components/BottomNavigation';
 import RequestCard from '../components/RequestCard';
@@ -121,6 +122,7 @@ const Requests = () => {
   const [activeTab, setActiveTab] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [requests, setRequests] = useState<UserRequest[]>([]);
+  const [backendSolicitudes, setBackendSolicitudes] = useState<SolicitudBackend[]>([]);
   const [totalSolicitudes, setTotalSolicitudes] = useState(0);
   const [totalCotizaciones, setTotalCotizaciones] = useState(0);
   const [ahorroTotal, setAhorroTotal] = useState(0);
@@ -305,6 +307,7 @@ const Requests = () => {
       const user = auth.currentUser;
       if (!user) {
         setRequests([]);
+        setBackendSolicitudes([]);
         setTotalSolicitudes(0);
         setTotalCotizaciones(0);
         setAhorroTotal(0);
@@ -312,109 +315,89 @@ const Requests = () => {
         return;
       }
 
-      // Obtener pedidos reportados por el usuario
       try {
+        // 1. Cargar solicitudes del backend
+        console.log("Cargando solicitudes del backend...");
+        const backendData = await solicitudesAPI.getUserSolicitudes(user.uid);
+        setBackendSolicitudes(backendData);
+        console.log(`Cargadas ${backendData.length} solicitudes del backend`);
+        
+        // 2. Para cada solicitud, obtener el número de cotizaciones
+        const solicitudesConCotizaciones = await Promise.all(
+          backendData.map(async (solicitud) => {
+            try {
+              // Obtener cotizaciones para esta solicitud
+              const response = await fetch(`http://localhost:8090/api/proposals/solicitud/${solicitud.id}`);
+              const cotizaciones = response.ok ? await response.json() : [];
+              return {
+                ...solicitud,
+                quotesCount: cotizaciones.length
+              };
+            } catch (error) {
+              console.error(`Error obteniendo cotizaciones para solicitud ${solicitud.id}:`, error);
+              return {
+                ...solicitud,
+                quotesCount: 0
+              };
+            }
+          })
+        );
+        
+        // 3. Convertir solicitudes del backend al formato UserRequest
+        const backendRequests: UserRequest[] = solicitudesConCotizaciones.map(solicitud => ({
+          id: `backend_${solicitud.id}`,
+          title: solicitud.titulo,
+          items: solicitud.items.map(item => ({
+            id: item.id?.toString() || '',
+            name: item.nombre,
+            quantity: item.cantidad,
+            specifications: item.especificaciones || '',
+            price: item.precio || 0,
+            suggestedPrice: item.precio || 0
+          })),
+          profession: solicitud.profesion,
+          location: solicitud.ubicacion,
+          urgency: 'media', // Valor por defecto ya que el backend no incluye urgencia
+          budget: solicitud.presupuesto || 0,
+          status: solicitud.estado as 'pendiente' | 'cotizando' | 'confirmado' | 'completado' | 'entregado' | 'cancelado',
+          createdAt: solicitud.fechaCreacion,
+          quotesCount: solicitud.quotesCount || 0, // Usar el valor calculado
+          userId: solicitud.usuarioId,
+          autoQuotes: [],
+          selectedCompanies: [],
+          selectedCompanyIds: [],
+          savings: 0,
+          driverId: null,
+          deliveryStatus: null,
+          deliveryId: null,
+        }));
+
+        // 3. Obtener pedidos reportados por el usuario (Firebase)
         const reportesRef = collection(db, 'reportes');
         const qReportes = query(reportesRef, where("userId", "==", user.uid));
         const reportesSnapshot = await getDocs(qReportes);
         const reportedIds = reportesSnapshot.docs.map(doc => doc.data().requestId);
         setReportedRequests(reportedIds);
         console.log("Pedidos reportados:", reportedIds);
-      } catch (error) {
-        console.error("Error al obtener pedidos reportados:", error);
-      }
 
-      try {
-        // Llamar al backend para obtener las solicitudes
-        console.log("Obteniendo solicitudes desde backend para usuario:", user.uid);
-        const response = await fetch(`http://localhost:8090/api/solicitudes/usuario/${user.uid}`, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        });
-
-        if (!response.ok) {
-          throw new Error(`Error HTTP: ${response.status}`);
-        }
-
-        const backendSolicitudes = await response.json();
-        console.log("Solicitudes recibidas del backend:", backendSolicitudes);
+        // 4. Actualizar estadísticas con las solicitudes del backend
+        setRequests(backendRequests);
+        setTotalSolicitudes(backendRequests.length);
+        const totalCotizaciones = solicitudesConCotizaciones.reduce((acc, s) => acc + (s.quotesCount || 0), 0);
+        setTotalCotizaciones(totalCotizaciones);
+        setAhorroTotal(0); // Por ahora 0, ya que el backend no maneja ahorros aún
+        setEnProceso(backendRequests.filter(r => r.status === "cotizando").length);
         
-        if (!Array.isArray(backendSolicitudes)) {
-          console.error("El backend no devolvió un array:", backendSolicitudes);
-          setRequests([]);
-          setTotalSolicitudes(0);
-          setTotalCotizaciones(0);
-          setAhorroTotal(0);
-          setEnProceso(0);
-          return;
-        }
-
-        // Convertir las solicitudes del backend al formato esperado por el frontend
-        const requestsData = backendSolicitudes.map(solicitud => {
-          // Datos básicos desde el backend
-          const data = {
-            id: solicitud.id ? solicitud.id.toString() : '', // Convertir ID a string
-            status: solicitud.estado || "pendiente",
-            title: solicitud.titulo || "Sin título",
-            items: Array.isArray(solicitud.items) ? solicitud.items.map(item => ({
-              name: item.nombre || "Item",
-              quantity: item.cantidad || 1,
-              specifications: item.especificaciones || "",
-              imageUrl: item.imagenUrl || "",
-              price: item.precio || 0
-            })) : [],
-            userId: solicitud.usuarioId || "",
-            profession: solicitud.profesion || "general",
-            location: solicitud.ubicacion || "No especificada",
-            urgency: "media", // Por defecto, ya que el backend no tiene este campo aún
-            budget: solicitud.presupuesto || 0,
-            createdAt: solicitud.fechaCreacion || new Date().toISOString(),
-            quotesCount: 0, // Por defecto, implementar cotizaciones más adelante
-            description: solicitud.descripcion || "",
-            estado: solicitud.estado || "",
-            autoQuotes: null, // Por defecto
-            selectedCompanies: [], // Por defecto
-            selectedCompanyIds: [], // Por defecto
-            savings: 0, // Por defecto
-            driverId: null,
-            deliveryStatus: null,
-            deliveryId: null,
-          };
-
-          console.log(`[Solicitud Backend ${data.id}] Convertida:`, data);
-          return data;
-        }) as UserRequest[];
-
-        // Estadísticas básicas
-        setRequests(requestsData);
-        setTotalSolicitudes(requestsData.length);
-        setTotalCotizaciones(requestsData.reduce((acc, r) => acc + (r.quotesCount || 0), 0));
-        
-        // Calcular ahorro total (por ahora será 0, pero mantenemos la lógica)
-        let totalAhorro = 0;
-        requestsData.forEach(request => {
-          if (request.savings !== undefined && request.savings !== null && !isNaN(Number(request.savings))) {
-            totalAhorro += Number(request.savings);
-            console.log(`[Cálculo Ahorro] Solicitud ${request.id}: $${request.savings} - Total acumulado: $${totalAhorro}`);
-          }
-        });
-        
-        // Actualizar el estado con el ahorro total calculado
-        console.log(`[Ahorro Total] Valor final calculado: $${totalAhorro}`);
-        setAhorroTotal(totalAhorro);
-        
-        // Contabilizar solicitudes en proceso
-        setEnProceso(requestsData.filter(r => r.status === "cotizando").length);
+        console.log(`Cargadas ${backendRequests.length} solicitudes del backend en total`);
         
       } catch (error) {
+        console.error("Error al cargar solicitudes:", error);
         setRequests([]);
+        setBackendSolicitudes([]);
         setTotalSolicitudes(0);
         setTotalCotizaciones(0);
         setAhorroTotal(0);
         setEnProceso(0);
-        console.error("Error al cargar solicitudes desde backend:", error);
       }
     };
 
@@ -1457,26 +1440,58 @@ const Requests = () => {
                           }
                         })()
                       ) : (
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center">
-                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-orange-500">
-                                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-5a.75.75 0 01.75.75v4.5a.75.75 0 01-1.5 0v-4.5A.75.75 0 0110 5zm0 10a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                        // Verificar si tiene cotizaciones
+                        request.quotesCount > 0 ? (
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-green-600">
+                                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.236 4.53L8.22 10.3a.75.75 0 00-1.06 1.061l1.5 1.5a.75.75 0 001.14-.067l3.5-4.5z" clipRule="evenodd" />
+                                </svg>
+                              </div>
+                              <div>
+                                <p className="text-sm font-medium text-gray-900">
+                                  {request.quotesCount} cotización{request.quotesCount !== 1 ? 'es' : ''} recibida{request.quotesCount !== 1 ? 's' : ''}
+                                </p>
+                                <p className="text-xs text-gray-500">Haz clic en "Ver cotizaciones" para revisarlas</p>
+                              </div>
+                            </div>
+                            <button 
+                              className="bg-green-100 text-green-700 text-xs px-3 py-1 rounded-lg flex items-center hover:bg-green-200 transition-colors"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigate(`/cotizaciones/${request.id.replace('backend_', '')}`);
+                              }}
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 mr-1">
+                                <path d="M10 12.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" />
+                                <path fillRule="evenodd" d="M.664 10.59a1.651 1.651 0 010-1.186A11.003 11.003 0 0110 2c4.257 0 7.893 2.66 9.336 6.41.147.381.147.804 0 1.186A11.003 11.003 0 0110 18c-4.257 0-7.893-2.66-9.336-6.41zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd" />
                               </svg>
+                              Ver cotizaciones
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-orange-500">
+                                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-5a.75.75 0 01.75.75v4.5a.75.75 0 01-1.5 0v-4.5A.75.75 0 0110 5zm0 10a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                                </svg>
+                              </div>
+                              <div>
+                                <p className="text-sm font-medium text-gray-900">Esperando asignación</p>
+                                <p className="text-xs text-gray-500">Pronto te contactaremos</p>
+                              </div>
                             </div>
-                            <div>
-                              <p className="text-sm font-medium text-gray-900">Esperando asignación</p>
-                              <p className="text-xs text-gray-500">Pronto te contactaremos</p>
+                            <div className="bg-orange-100 text-orange-700 text-xs px-3 py-1 rounded-lg flex items-center">
+                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 mr-1">
+                                <path d="M15.98 1.804a1 1 0 00-1.96 0l-.24 1.192a1 1 0 01-.784.785l-1.192.238a1 1 0 000 1.962l1.192.238a1 1 0 01.785.785l.238 1.192a1 1 0 001.962 0l.238-1.192a1 1 0 01.785-.785l1.192-.238a1 1 0 000-1.962l-1.192-.238a1 1 0 01-.785-.785l-.238-1.192z" />
+                                <path fillRule="evenodd" d="M4.893 1.776a1 1 0 010 1.966l-2.11.421a1 1 0 00-.812.812l-.42 2.11a1 1 0 01-1.966 0l-.421-2.11a1 1 0 00-.812-.812l-2.11-.42a1 1 0 010-1.966l2.11-.421a1 1 0 00.812-.812l.42-2.11a1 1 0 011.967 0l.42 2.11a1 1 0 00.813.812l2.11.42z" clipRule="evenodd" />
+                              </svg>
+                              Pendiente
                             </div>
                           </div>
-                          <div className="bg-orange-100 text-orange-700 text-xs px-3 py-1 rounded-lg flex items-center">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 mr-1">
-                              <path d="M15.98 1.804a1 1 0 00-1.96 0l-.24 1.192a1 1 0 01-.784.785l-1.192.238a1 1 0 000 1.962l1.192.238a1 1 0 01.785.785l.238 1.192a1 1 0 001.962 0l.238-1.192a1 1 0 01.785-.785l1.192-.238a1 1 0 000-1.962l-1.192-.238a1 1 0 01-.785-.785l-.238-1.192z" />
-                              <path fillRule="evenodd" d="M4.893 1.776a1 1 0 010 1.966l-2.11.421a1 1 0 00-.812.812l-.42 2.11a1 1 0 01-1.966 0l-.421-2.11a1 1 0 00-.812-.812l-2.11-.42a1 1 0 010-1.966l2.11-.421a1 1 0 00.812-.812l.42-2.11a1 1 0 011.967 0l.42 2.11a1 1 0 00.813.812l2.11.42z" clipRule="evenodd" />
-                            </svg>
-                            Pendiente
-                          </div>
-                        </div>
+                        )
                       )}
                     </div>
                   </div>

@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import DashboardLayout from "@/components/barraempresa";
 import { doc, getDoc, addDoc, collection, Timestamp } from "firebase/firestore";
 import { db } from "../lib/firebase";
+import { getAuth } from "firebase/auth";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -19,7 +20,9 @@ import {
   Plus,
   X,
   Calendar,
-  FileText
+  FileText,
+  CheckCircle,
+  AlertCircle
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -33,6 +36,8 @@ type QuoteRequest = {
   createdAt?: any;
   userId?: string;
   profession?: string;
+  clientName?: string;
+  clientCity?: string;
   items?: Array<{
     name: string;
     quantity: number;
@@ -44,6 +49,8 @@ const QuoteProposal = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { toast } = useToast();
+  const auth = getAuth();
+  const user = auth.currentUser;
 
   const queryParams = new URLSearchParams(location.search);
   const quoteId = queryParams.get("id");
@@ -51,12 +58,13 @@ const QuoteProposal = () => {
   const [quoteRequest, setQuoteRequest] = useState<QuoteRequest | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [companyData, setCompanyData] = useState<any>(null);
 
   // Nuevo: descuento general
   const [discount, setDiscount] = useState<{ type: "percent" | "amount"; value: number }>({ type: "percent", value: 0 });
 
   const [proposal, setProposal] = useState({
-    items: [] as Array<{id: number, name: string, quantity: number, unitPrice: number, specifications: string}>,
+    items: [] as Array<{id: number, name: string, quantity: number, unitPrice: number, specifications: string, comments?: string}>,
     totalAmount: 0,
     deliveryTime: "",
     notes: "",
@@ -73,31 +81,139 @@ const QuoteProposal = () => {
         setLoading(false);
         return;
       }
+
+      if (!user) {
+        setError("Usuario no autenticado");
+        setLoading(false);
+        return;
+      }
+
       try {
-        const quoteRef = doc(db, "solicitud", quoteId);
-        const quoteSnap = await getDoc(quoteRef);
-        if (quoteSnap.exists()) {
-          const data = { id: quoteSnap.id, ...quoteSnap.data() } as QuoteRequest;
-          setQuoteRequest(data);
+        // 1. Obtener datos de la empresa actual
+        console.log("🔍 Obteniendo datos de empresa para UID:", user.uid);
+        const companyResponse = await fetch(`http://localhost:8090/api/usuarios/firebase/${user.uid}`);
+        
+        if (companyResponse.ok) {
+          const userData = await companyResponse.json();
+          console.log("🏢 Datos de empresa obtenidos:", userData);
+          setCompanyData(userData);
+        } else {
+          console.warn("⚠️ Usuario no encontrado en MySQL, sincronizando...");
+          // Si el usuario no existe en MySQL, sincronizarlo
+          const syncResponse = await fetch(`http://localhost:8090/api/usuarios/sync-firebase`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              uid: user.uid,
+              email: user.email,
+              displayName: user.displayName,
+              userType: 'empresa', // Asumimos que está en el backoffice de empresas
+              companyName: user.displayName // Usar displayName como companyName por defecto
+            })
+          });
+
+          if (syncResponse.ok) {
+            const syncedUser = await syncResponse.json();
+            console.log("✅ Usuario sincronizado:", syncedUser);
+            setCompanyData(syncedUser);
+          } else {
+            console.error("❌ Error sincronizando usuario");
+          }
+        }
+
+        // 2. Obtener solicitud desde el backend MySQL
+        console.log("🔍 Obteniendo solicitud desde backend para ID:", quoteId);
+        const response = await fetch(`http://localhost:8090/api/solicitudes/${quoteId}`);
+        
+        if (response.ok) {
+          const data = await response.json();
+          console.log("📦 Datos de solicitud desde backend:", data);
+          
+          // Obtener información del cliente
+          let clientName = "Cliente Anónimo";
+          let clientCity = data.ciudadOrigen || "Sin ciudad";
+          
+          if (data.usuarioId) {
+            try {
+              const clientResponse = await fetch(`http://localhost:8090/api/usuarios/firebase/${data.usuarioId}`);
+              if (clientResponse.ok) {
+                const clientData = await clientResponse.json();
+                clientName = clientData.nombreCompleto || "Cliente Anónimo";
+                clientCity = clientData.ciudad || data.ciudadOrigen || "Sin ciudad";
+                console.log("👤 Datos del cliente:", clientData);
+              }
+            } catch (clientError) {
+              console.warn("⚠️ No se pudo obtener datos del cliente:", clientError);
+            }
+          }
+          
+          // Mapear los datos del backend al formato esperado
+          const mappedData: QuoteRequest = {
+            id: data.id.toString(),
+            title: data.titulo || "Sin título",
+            description: data.descripcion || "Sin descripción",
+            location: data.ciudadOrigen || "Sin ubicación",
+            budget: data.presupuesto || 0,
+            urgency: data.urgencia || "media",
+            createdAt: data.fechaCreacion,
+            userId: data.usuarioId || "Anónimo",
+            profession: data.categoria || "Sin categoría",
+            clientName: clientName,
+            clientCity: clientCity,
+            items: data.items || []
+          };
+          
+          setQuoteRequest(mappedData);
+          
+          // Si hay items, mapearlos para la cotización
           if (data.items && data.items.length > 0) {
-            const proposalItems = data.items.map((item, index) => ({
+            const proposalItems = data.items.map((item: any, index: number) => ({
               id: index,
-              name: item.name || "",
-              quantity: item.quantity || 1,
+              name: item.nombre || item.name || "",
+              quantity: item.cantidad || item.quantity || 1,
               unitPrice: 0,
-              specifications: item.specifications || ""
+              specifications: item.especificaciones || item.specifications || "",
+              comments: ""
             }));
             setProposal(prev => ({ ...prev, items: proposalItems }));
           }
+        } else if (response.status === 404) {
+          // Si no se encuentra en el backend, intentar con Firebase como fallback
+          console.log("⚠️ Solicitud no encontrada en backend, intentando con Firebase...");
+          
+          const quoteRef = doc(db, "solicitud", quoteId);
+          const quoteSnap = await getDoc(quoteRef);
+          
+          if (quoteSnap.exists()) {
+            const data = { id: quoteSnap.id, ...quoteSnap.data() } as QuoteRequest;
+            console.log("📦 Datos de solicitud desde Firebase:", data);
+            setQuoteRequest(data);
+            
+            if (data.items && data.items.length > 0) {
+              const proposalItems = data.items.map((item, index) => ({
+                id: index,
+                name: item.name || "",
+                quantity: item.quantity || 1,
+                unitPrice: 0,
+                specifications: item.specifications || "",
+                comments: ""
+              }));
+              setProposal(prev => ({ ...prev, items: proposalItems }));
+            }
+          } else {
+            setError("La solicitud no existe en ninguna base de datos");
+          }
         } else {
-          setError("La solicitud no existe");
+          throw new Error(`Error del servidor: ${response.status}`);
         }
       } catch (err) {
+        console.error("❌ Error al cargar la solicitud:", err);
         setError("Error al cargar los datos de la solicitud");
       } finally {
         setLoading(false);
       }
     };
+
     fetchQuoteRequest();
   }, [quoteId]);
 
@@ -166,38 +282,135 @@ const QuoteProposal = () => {
       });
       return;
     }
+    
     try {
+      console.log("📤 Enviando cotización...");
+      
+      const subtotal = proposal.items.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
+      
       const quoteData = {
-        requestId: quoteId,
-        requestTitle: quoteRequest?.title || "Sin título",
-        company: {
-          name: "Mi Empresa S.A.",
+        solicitudId: parseInt(quoteId!),
+        tituloSolicitud: quoteRequest?.title || "Sin título",
+        empresa: {
+          nombre: "Mi Empresa S.A.", // TODO: Obtener datos reales de la empresa
           logo: "",
-          rating: 4.7,
-          verified: true,
+          calificacion: 4.7,
+          verificada: true,
         },
-        subtotal: proposal.items.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0),
-        discount: discount,
-        totalAmount: proposal.totalAmount,
-        originalBudget: quoteRequest?.budget || 0,
-        savings: (quoteRequest?.budget || 0) - proposal.totalAmount > 0 
+        subtotal: subtotal,
+        descuento: discount,
+        montoTotal: proposal.totalAmount,
+        presupuestoOriginal: quoteRequest?.budget || 0,
+        ahorro: (quoteRequest?.budget || 0) - proposal.totalAmount > 0 
           ? (quoteRequest?.budget || 0) - proposal.totalAmount 
           : 0,
-        deliveryTime: proposal.deliveryTime,
-        items: proposal.items,
-        status: "pending",
-        createdAt: Timestamp.now(),
-        validUntil: new Date(proposal.validUntil + "T23:59:59"),
-        notes: proposal.notes,
-        paymentOptions: proposal.paymentOptions,
+        tiempoEntrega: proposal.deliveryTime,
+        items: proposal.items.map(item => ({
+          nombre: item.name,
+          cantidad: item.quantity,
+          precioUnitario: item.unitPrice,
+          especificaciones: item.specifications,
+          comentarios: item.comments || "",
+          subtotal: item.quantity * item.unitPrice
+        })),
+        estado: "pendiente",
+        validoHasta: new Date(proposal.validUntil + "T23:59:59").toISOString(),
+        notas: proposal.notes,
+        opcionesPago: proposal.paymentOptions,
       };
-      await addDoc(collection(db, "cotizaciones"), quoteData);
-      toast({
-        title: "Propuesta enviada",
-        description: "Tu cotización ha sido enviada correctamente al cliente",
+
+      // Intentar enviar al backend MySQL usando el nuevo endpoint de propuestas
+      console.log("🔍 Datos de empresa obtenidos:", companyData);
+      
+      if (!companyData || !companyData.id) {
+        throw new Error("No se pudo obtener el ID de la empresa. Por favor, verifica que la empresa esté registrada correctamente.");
+      }
+
+      const proposalData = {
+        companyId: companyData.id, // Usar ID numérico de la tabla usuarios
+        solicitudId: parseInt(quoteId!),
+        currency: "COP",
+        companyName: companyData?.companyName || companyData?.nick || companyData?.nombreCompleto || "Empresa",
+        deliveryTime: proposal.deliveryTime,
+        items: proposal.items.map(item => ({
+          productName: item.name,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          comments: `${item.specifications ? 'Especificaciones: ' + item.specifications : ''}${item.comments ? (item.specifications ? ' | ' : '') + 'Comentarios: ' + item.comments : ''}`
+        }))
+      };
+
+      console.log("📤 Enviando propuesta al backend:", proposalData);
+
+      const backendResponse = await fetch('http://localhost:8090/api/proposals', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(proposalData),
       });
-      navigate("/dashboard");
+
+      if (backendResponse.ok) {
+        const result = await backendResponse.json();
+        console.log("✅ Propuesta guardada en backend:", result);
+        toast({
+          title: "Propuesta enviada",
+          description: "Tu propuesta ha sido enviada correctamente al cliente",
+        });
+        navigate("/backoffice");
+      } else {
+        const errorData = await backendResponse.json();
+        console.error("❌ Error del backend:", errorData);
+        
+        // Si hay un error específico, mostrarlo
+        if (errorData.error) {
+          toast({
+            title: "Error",
+            description: errorData.error,
+            variant: "destructive",
+          });
+          return;
+        }
+        
+        // Fallback a Firebase si el backend falla
+        console.log("⚠️ Backend falló, guardando en Firebase...");
+        
+        const firebaseQuoteData = {
+          requestId: quoteId,
+          requestTitle: quoteRequest?.title || "Sin título",
+          company: {
+            name: "Mi Empresa S.A.",
+            logo: "",
+            rating: 4.7,
+            verified: true,
+          },
+          subtotal: subtotal,
+          discount: discount,
+          totalAmount: proposal.totalAmount,
+          originalBudget: quoteRequest?.budget || 0,
+          savings: (quoteRequest?.budget || 0) - proposal.totalAmount > 0 
+            ? (quoteRequest?.budget || 0) - proposal.totalAmount 
+            : 0,
+          deliveryTime: proposal.deliveryTime,
+          items: proposal.items,
+          status: "pending",
+          createdAt: Timestamp.now(),
+          validUntil: new Date(proposal.validUntil + "T23:59:59"),
+          notes: proposal.notes,
+          paymentOptions: proposal.paymentOptions,
+        };
+        
+        await addDoc(collection(db, "cotizaciones"), firebaseQuoteData);
+        console.log("✅ Cotización guardada en Firebase");
+        
+        toast({
+          title: "Cotización enviada",
+          description: "Tu cotización ha sido enviada correctamente al cliente",
+        });
+        navigate("/backoffice");
+      }
     } catch (err) {
+      console.error("❌ Error al enviar cotización:", err);
       toast({
         title: "Error",
         description: "Hubo un problema al enviar la cotización",
@@ -280,7 +493,7 @@ const QuoteProposal = () => {
                 <div className="space-y-3">
                   <div className="flex items-center space-x-2">
                     <MapPin className="w-4 h-4 text-gray-400" />
-                    <span className="text-gray-700">{quoteRequest?.location || "Sin ubicación"}</span>
+                    <span className="text-gray-700">{quoteRequest?.clientCity || "Sin ciudad"}</span>
                   </div>
                   
                   <div className="flex items-center space-x-2">
@@ -291,26 +504,22 @@ const QuoteProposal = () => {
                   </div>
                   
                   <div className="flex items-center space-x-2">
-                    <Clock className="w-4 h-4 text-gray-400" />
-                    <Badge className={getUrgencyColor(quoteRequest?.urgency || "")}>
-                      {quoteRequest?.urgency === "alta" ? "Urgente" :
-                        quoteRequest?.urgency === "media" ? "Media" :
-                        quoteRequest?.urgency === "baja" ? "Baja" : "No especificada"}
-                    </Badge>
-                  </div>
-                  
-                  <div className="flex items-center space-x-2">
                     <Calendar className="w-4 h-4 text-gray-400" />
                     <span className="text-gray-700">
                       Fecha: {quoteRequest?.createdAt ? new Date(quoteRequest.createdAt).toLocaleDateString() : "No especificada"}
                     </span>
                   </div>
 
-                  <div className="flex items-center space-x-2">
-                    <Users className="w-4 h-4 text-gray-400" />
-                    <span className="text-gray-700">
-                      Cliente: {quoteRequest?.userId || "Anónimo"}
-                    </span>
+                  <div className="flex items-start space-x-2">
+                    <Users className="w-4 h-4 text-gray-400 mt-0.5" />
+                    <div className="flex flex-col">
+                      <span className="text-gray-900 font-medium">
+                        {quoteRequest?.clientName || "Cliente Anónimo"}
+                      </span>
+                      <span className="text-xs text-gray-500">
+                        ID: {quoteRequest?.userId || "No disponible"}
+                      </span>
+                    </div>
                   </div>
                   
                   <div className="flex items-center space-x-2">
@@ -354,107 +563,211 @@ const QuoteProposal = () => {
               <form onSubmit={handleSubmit} className="space-y-6">
                 {/* Listado de items */}
                 <div>
-                  <h3 className="text-md font-semibold text-gray-900 mb-3">Items a cotizar</h3>
-                  <div className="space-y-2 max-h-96 overflow-y-auto">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+                    <FileText className="w-5 h-5 mr-2 text-blue-600" />
+                    Artículos a Cotizar
+                  </h3>
+                  <div className="space-y-4">
                     {proposal.items.map((item, idx) => (
-                      <div key={item.id} className="flex flex-col md:flex-row md:items-center justify-between p-3 bg-gray-50 rounded-lg gap-2">
-                        <div className="flex-1">
-                          <p className="font-medium text-gray-900">{item.name}</p>
-                          <div className="flex flex-wrap gap-2 mt-1">
-                            <div>
-                              <Label>Cantidad</Label>
-                              <Input
-                                type="number"
-                                min="1"
-                                value={item.quantity}
-                                onChange={e => {
-                                  const newItems = [...proposal.items];
-                                  newItems[idx].quantity = parseInt(e.target.value) || 1;
-                                  setProposal(prev => ({ ...prev, items: newItems }));
-                                }}
-                                className="w-20"
-                              />
+                      <Card key={item.id} className="border-l-4 border-l-blue-500">
+                        <CardContent className="p-4">
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                            {/* Información del artículo */}
+                            <div className="lg:col-span-2">
+                              <h4 className="font-semibold text-gray-900 mb-2">{item.name}</h4>
+                              <div className="space-y-2">
+                                <div>
+                                  <Label className="text-xs text-gray-600">Cantidad Solicitada</Label>
+                                  <div className="flex items-center space-x-2">
+                                    <Input
+                                      type="number"
+                                      min="1"
+                                      value={item.quantity}
+                                      onChange={e => {
+                                        const newItems = [...proposal.items];
+                                        newItems[idx].quantity = parseInt(e.target.value) || 1;
+                                        setProposal(prev => ({ ...prev, items: newItems }));
+                                      }}
+                                      className="w-24"
+                                    />
+                                    <span className="text-sm text-gray-500">unidades</span>
+                                  </div>
+                                </div>
+                                <div>
+                                  <Label className="text-xs text-gray-600">Especificaciones Adicionales</Label>
+                                  <Textarea
+                                    value={item.specifications}
+                                    onChange={e => {
+                                      const newItems = [...proposal.items];
+                                      newItems[idx].specifications = e.target.value;
+                                      setProposal(prev => ({ ...prev, items: newItems }));
+                                    }}
+                                    placeholder="Detalles adicionales, marca preferida, características especiales..."
+                                    className="min-h-[60px]"
+                                  />
+                                </div>
+                              </div>
                             </div>
+
+                            {/* Precio y totales */}
                             <div>
-                              <Label>Precio Unitario</Label>
-                              <Input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                value={item.unitPrice}
-                                onChange={e => {
-                                  const newItems = [...proposal.items];
-                                  newItems[idx].unitPrice = parseFloat(e.target.value) || 0;
-                                  setProposal(prev => ({ ...prev, items: newItems }));
-                                }}
-                                className="w-24"
-                              />
+                              <Label className="text-xs text-gray-600">Precio por Unidad</Label>
+                              <div className="relative">
+                                <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">$</span>
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={item.unitPrice}
+                                  onChange={e => {
+                                    const newItems = [...proposal.items];
+                                    newItems[idx].unitPrice = parseFloat(e.target.value) || 0;
+                                    setProposal(prev => ({ ...prev, items: newItems }));
+                                  }}
+                                  className="pl-8"
+                                  placeholder="0.00"
+                                />
+                              </div>
+                              <div className="mt-3 p-3 bg-green-50 rounded-lg">
+                                <div className="text-sm text-gray-600">Subtotal</div>
+                                <div className="text-lg font-bold text-green-700">
+                                  ${(item.quantity * item.unitPrice).toLocaleString('es-CO', { minimumFractionDigits: 2 })}
+                                </div>
+                              </div>
                             </div>
+
+                            {/* Comentarios específicos del artículo */}
                             <div>
-                              <Label>Especificaciones</Label>
-                              <Input
-                                value={item.specifications}
+                              <Label className="text-xs text-gray-600">Comentarios del Artículo</Label>
+                              <Textarea
+                                value={item.comments || ''}
                                 onChange={e => {
                                   const newItems = [...proposal.items];
-                                  newItems[idx].specifications = e.target.value;
+                                  newItems[idx] = { ...newItems[idx], comments: e.target.value };
                                   setProposal(prev => ({ ...prev, items: newItems }));
                                 }}
-                                className="w-40"
+                                placeholder="Garantía, tiempo de entrega específico, condiciones especiales..."
+                                className="min-h-[80px]"
                               />
                             </div>
                           </div>
-                        </div>
-                        <div className="font-bold text-gray-900 mt-2 md:mt-0">
-                          Total: ${(item.quantity * item.unitPrice).toLocaleString()}
-                        </div>
-                      </div>
+                        </CardContent>
+                      </Card>
                     ))}
                   </div>
+                  
                   {proposal.items.length === 0 && (
-                    <div className="text-center py-8 text-gray-500">
-                      <p>No hay items para cotizar</p>
+                    <div className="text-center py-12 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
+                      <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                      <h3 className="text-lg font-medium text-gray-900 mb-2">No hay artículos para cotizar</h3>
+                      <p className="text-gray-500">Los artículos solicitados por el cliente aparecerán aquí automáticamente.</p>
                     </div>
                   )}
                 </div>
 
-                {/* Total y descuento */}
+                {/* Resumen de totales */}
                 {proposal.items.length > 0 && (
-                  <div className="mt-4 flex flex-col items-end gap-2">
-                    <div className="flex items-center gap-2">
-                      <Label>Descuento:</Label>
-                      <Input
-                        type="number"
-                        min="0"
-                        max={discount.type === "percent" ? 100 : undefined}
-                        value={discount.value}
-                        onChange={e => setDiscount(d => ({ ...d, value: parseFloat(e.target.value) || 0 }))}
-                        className="w-20"
-                      />
-                      <select
-                        value={discount.type}
-                        onChange={e => setDiscount(d => ({ ...d, type: e.target.value as "percent" | "amount" }))}
-                        className="border rounded px-2 py-1 text-sm"
-                      >
-                        <option value="percent">%</option>
-                        <option value="amount">$</option>
-                      </select>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-gray-600 text-sm">Subtotal: ${proposal.items.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0).toLocaleString()}</p>
-                      {discount.value > 0 && (
-                        <p className="text-green-600 text-sm">
-                          Descuento: {discount.type === "percent" ? `${discount.value}%` : `$${discount.value.toLocaleString()}`}
-                        </p>
-                      )}
-                      <p className="text-xl font-bold text-gray-900">Total: ${proposal.totalAmount.toLocaleString()}</p>
-                      {quoteRequest?.budget && proposal.totalAmount < quoteRequest.budget && (
-                        <p className="text-sm text-green-600">
-                          Ahorro: ${(quoteRequest.budget - proposal.totalAmount).toLocaleString()}
-                          ({Math.round(((quoteRequest.budget - proposal.totalAmount) / quoteRequest.budget) * 100)}%)
-                        </p>
-                      )}
-                    </div>
-                  </div>
+                  <Card className="bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200">
+                    <CardHeader className="pb-4">
+                      <CardTitle className="text-lg flex items-center">
+                        <Euro className="w-5 h-5 mr-2 text-blue-600" />
+                        Resumen de Cotización
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {/* Descuento */}
+                      <div className="flex items-center justify-between">
+                        <Label className="text-sm font-medium">Aplicar Descuento:</Label>
+                        <div className="flex items-center space-x-2">
+                          <Input
+                            type="number"
+                            min="0"
+                            max={discount.type === "percent" ? 100 : undefined}
+                            value={discount.value}
+                            onChange={e => setDiscount(d => ({ ...d, value: parseFloat(e.target.value) || 0 }))}
+                            className="w-20"
+                            placeholder="0"
+                          />
+                          <select
+                            value={discount.type}
+                            onChange={e => setDiscount(d => ({ ...d, type: e.target.value as "percent" | "amount" }))}
+                            className="border rounded px-3 py-2 text-sm bg-white"
+                          >
+                            <option value="percent">%</option>
+                            <option value="amount">$ COP</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Línea separadora */}
+                      <hr className="border-blue-200" />
+
+                      {/* Cálculos */}
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-600">Subtotal:</span>
+                          <span className="font-medium">
+                            ${proposal.items.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0).toLocaleString('es-CO', { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                        
+                        {discount.value > 0 && (
+                          <div className="flex justify-between text-sm text-green-600">
+                            <span>
+                              Descuento ({discount.type === "percent" ? `${discount.value}%` : `$${discount.value.toLocaleString('es-CO')}`}):
+                            </span>
+                            <span className="font-medium">
+                              -${(discount.type === "percent" 
+                                ? (proposal.items.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0) * discount.value / 100)
+                                : discount.value
+                              ).toLocaleString('es-CO', { minimumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                        )}
+                        
+                        <hr className="border-blue-200" />
+                        
+                        <div className="flex justify-between text-lg font-bold text-gray-900">
+                          <span>Total Final:</span>
+                          <span className="text-blue-600">
+                            ${proposal.totalAmount.toLocaleString('es-CO', { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                        
+                        {/* Ahorro comparado con presupuesto del cliente */}
+                        {quoteRequest?.budget && proposal.totalAmount < quoteRequest.budget && (
+                          <div className="bg-green-100 p-3 rounded-lg mt-3">
+                            <div className="flex items-center space-x-2">
+                              <CheckCircle className="w-4 h-4 text-green-600" />
+                              <span className="text-sm font-medium text-green-800">
+                                ¡Excelente! Tu cotización está por debajo del presupuesto del cliente
+                              </span>
+                            </div>
+                            <div className="text-sm text-green-700 mt-1">
+                              Ahorro para el cliente: ${(quoteRequest.budget - proposal.totalAmount).toLocaleString('es-CO', { minimumFractionDigits: 2 })}
+                              ({Math.round(((quoteRequest.budget - proposal.totalAmount) / quoteRequest.budget) * 100)}% menos)
+                            </div>
+                          </div>
+                        )}
+                        
+                        {/* Advertencia si excede el presupuesto */}
+                        {quoteRequest?.budget && proposal.totalAmount > quoteRequest.budget && (
+                          <div className="bg-yellow-100 p-3 rounded-lg mt-3">
+                            <div className="flex items-center space-x-2">
+                              <AlertCircle className="w-4 h-4 text-yellow-600" />
+                              <span className="text-sm font-medium text-yellow-800">
+                                Tu cotización excede el presupuesto del cliente
+                              </span>
+                            </div>
+                            <div className="text-sm text-yellow-700 mt-1">
+                              Diferencia: +${(proposal.totalAmount - quoteRequest.budget).toLocaleString('es-CO', { minimumFractionDigits: 2 })}
+                              ({Math.round(((proposal.totalAmount - quoteRequest.budget) / quoteRequest.budget) * 100)}% más)
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
                 )}
                 
                 {/* Tiempo de entrega */}
@@ -521,35 +834,59 @@ const QuoteProposal = () => {
                   />
                 </div>
 
-                {/* Notas adicionales */}
-                <div>
-                  <Label htmlFor="notes">Notas Adicionales</Label>
-                  <Textarea
-                    id="notes"
-                    placeholder="Información adicional sobre la cotización, garantías, condiciones, etc."
-                    value={proposal.notes}
-                    onChange={(e) => setProposal({...proposal, notes: e.target.value})}
-                    rows={4}
-                  />
-                </div>
+                {/* Comentarios generales de la cotización */}
+                <Card className="border-l-4 border-l-green-500">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-lg flex items-center">
+                      <FileText className="w-5 h-5 mr-2 text-green-600" />
+                      Comentarios Generales de la Cotización
+                    </CardTitle>
+                    <CardDescription>
+                      Información adicional sobre la propuesta, garantías, condiciones especiales, etc.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Textarea
+                      id="notes"
+                      placeholder="Ejemplo: 
+• Garantía de 1 año en todos los productos
+• Entrega incluida en el precio
+• Posibilidad de financiación a 3 meses
+• Atención postventa 24/7
+• Instalación gratuita"
+                      value={proposal.notes}
+                      onChange={(e) => setProposal({...proposal, notes: e.target.value})}
+                      rows={6}
+                      className="resize-none"
+                    />
+                  </CardContent>
+                </Card>
 
                 {/* Botones de acción */}
-                <div className="flex justify-end space-x-3 pt-4">
-                  <Button 
-                    variant="outline" 
-                    type="button"
-                    onClick={() => navigate(-1)}
-                  >
-                    Cancelar
-                  </Button>
-                  <Button 
-                    type="submit"
-                    className="company-card text-white bg-blue-600 hover:bg-blue-700"
-                    disabled={proposal.items.length === 0}
-                  >
-                    <Send className="w-4 h-4 mr-2" />
-                    Enviar Propuesta
-                  </Button>
+                <div className="flex flex-col sm:flex-row justify-between items-center space-y-3 sm:space-y-0 sm:space-x-3 pt-6 border-t">
+                  <div className="flex items-center space-x-2 text-sm text-gray-600">
+                    <Clock className="w-4 h-4" />
+                    <span>La cotización será enviada inmediatamente al cliente</span>
+                  </div>
+                  <div className="flex space-x-3">
+                    <Button 
+                      variant="outline" 
+                      type="button"
+                      onClick={() => navigate(-1)}
+                      className="px-6"
+                    >
+                      <ArrowLeft className="w-4 h-4 mr-2" />
+                      Cancelar
+                    </Button>
+                    <Button 
+                      type="submit"
+                      className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white px-8 shadow-lg"
+                      disabled={proposal.items.length === 0 || !proposal.deliveryTime || proposal.paymentOptions.length === 0}
+                    >
+                      <Send className="w-4 h-4 mr-2" />
+                      Enviar Cotización
+                    </Button>
+                  </div>
                 </div>
               </form>
             </CardContent>

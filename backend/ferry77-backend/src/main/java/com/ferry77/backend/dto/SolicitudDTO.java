@@ -8,6 +8,7 @@ public class SolicitudDTO {
     public String usuarioEmail;
     public String titulo;
     public String profesion;
+    public String tipo; // herramienta o herraje
     public String ubicacion;
     public Double presupuesto;
     public List<ItemDTO> items;

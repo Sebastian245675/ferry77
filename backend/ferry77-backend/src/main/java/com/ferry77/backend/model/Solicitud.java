@@ -8,7 +8,14 @@ import java.util.List;
 @Table(name = "solicitudes", indexes = {
     @Index(name = "idx_usuario", columnList = "usuarioId"),
     @Index(name = "idx_estado", columnList = "estado"),
-    @Index(name = "idx_fecha", columnList = "fechaCreacion")
+    @Index(name = "idx_fecha", columnList = "fechaCreacion"),
+    // NUEVOS ÍNDICES OPTIMIZADOS PARA FILTRADO POR CIUDAD Y ESTADO
+    @Index(name = "idx_ubicacion", columnList = "ubicacion"),
+    @Index(name = "idx_estado_ubicacion", columnList = "estado, ubicacion"),
+    @Index(name = "idx_ubicacion_estado_fecha", columnList = "ubicacion, estado, fechaCreacion"),
+    @Index(name = "idx_pendientes_ciudad", columnList = "estado, ubicacion, fechaCreacion"),
+    // Índice para búsquedas frecuentes de solicitudes activas por ubicación
+    @Index(name = "idx_activas_ubicacion", columnList = "ubicacion, estado, fechaCreacion")
 })
 public class Solicitud {
     @Id
@@ -18,8 +25,10 @@ public class Solicitud {
     private String usuarioId;
     private String usuarioNombre;
     private String usuarioEmail;
+    private String telefono; // Teléfono del usuario que hizo la solicitud
     private String titulo;
     private String profesion;
+    private String tipo; // herramienta o herraje
     private String ubicacion;
     private Double presupuesto;
     private String estado; // pendiente, cotizando, finalizada, cancelada
@@ -69,6 +78,14 @@ public class Solicitud {
         this.usuarioEmail = usuarioEmail;
     }
 
+    public String getTelefono() {
+        return telefono;
+    }
+
+    public void setTelefono(String telefono) {
+        this.telefono = telefono;
+    }
+
     public String getTitulo() {
         return titulo;
     }
@@ -83,6 +100,14 @@ public class Solicitud {
 
     public void setProfesion(String profesion) {
         this.profesion = profesion;
+    }
+
+    public String getTipo() {
+        return tipo;
+    }
+
+    public void setTipo(String tipo) {
+        this.tipo = tipo;
     }
 
     public String getUbicacion() {

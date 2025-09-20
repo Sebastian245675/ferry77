@@ -146,7 +146,7 @@ function extraerCoordenadas(direccion) {
 }
 import { Link, useNavigate } from 'react-router-dom';
 import { logger } from '@/lib/logger';
-import { Plus, X, MapPin, Clock, DollarSign, Hammer, HardHat, Zap, ArrowLeft, CheckCircle, Building2, Store, AlertCircle, Loader2, Map, ExternalLink, ClipboardCheck, Info } from 'lucide-react';
+import { Plus, X, MapPin, Clock, DollarSign, Hammer, HardHat, Zap, ArrowLeft, CheckCircle, Building2, Store, AlertCircle, Loader2, Map, ExternalLink, ClipboardCheck, Info, Package } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -168,6 +168,7 @@ const NewRequest = () => {
   const [formData, setFormData] = useState({
     title: '',
     profession: 'carpintería',
+    tipo: 'herramienta', // Nuevo campo: herramienta o herraje
     location: '',
     budget: '',
     items: []
@@ -212,6 +213,30 @@ const NewRequest = () => {
           if (userSnap.exists()) {
             const userData = userSnap.data();
             setUserProfileData(userData);
+            
+            // Autocompletar ubicación del perfil si existe
+            let userLocation = '';
+            if (userData.location) {
+              userLocation = userData.location;
+            } else if (userData.ubicompleta) {
+              // Construir dirección completa desde ubicompleta
+              const ubi = userData.ubicompleta;
+              const partes = [];
+              if (ubi.direccion) partes.push(ubi.direccion);
+              if (ubi.barrio) partes.push(ubi.barrio);
+              if (ubi.ciudad) partes.push(ubi.ciudad);
+              if (ubi.localidad && ubi.localidad !== ubi.ciudad) partes.push(ubi.localidad);
+              userLocation = partes.join(', ');
+            }
+            
+            // Autocompletar la ubicación en el formulario
+            if (userLocation) {
+              setFormData(prev => ({
+                ...prev,
+                location: userLocation
+              }));
+              console.log("Ubicación autocompletada del perfil:", userLocation);
+            }
             
             // Mostrar sugerencia solo si hay una ubicación en el perfil
             if (userData.location || 
@@ -512,6 +537,7 @@ const NewRequest = () => {
         usuarioEmail: user.email || "",
         titulo: formData.title,
         profesion: formData.profession,
+        tipo: formData.tipo, // Nuevo campo: herramienta o herraje
         ubicacion: formData.location,
         presupuesto: formData.budget ? parseFloat(formData.budget) : null,
         items: formData.items.map(item => ({
@@ -758,6 +784,7 @@ const NewRequest = () => {
         usuarioEmail: user.email,
         titulo: formData.title,
         profesion: formData.profession || "general",
+        tipo: formData.tipo, // Nuevo campo: herramienta o herraje
         ubicacion: formData.location,
         presupuesto: formData.budget ? parseFloat(formData.budget) : null,
         items: formData.items.map(item => ({
@@ -1491,214 +1518,25 @@ const NewRequest = () => {
             <h2 className="text-lg font-semibold text-gray-900 mb-4">Detalles del Proyecto</h2>
             
             <div className="space-y-4">
+              {/* Tipo de Solicitud */}
               <div>
-                <Label htmlFor="location">
-                  <MapPin size={16} className="inline mr-1" />
-                  Ubicación
+                <Label htmlFor="tipo">
+                  <Package size={16} className="inline mr-1" />
+                  Tipo de Solicitud
                 </Label>
-                <div className="relative flex">
-                  <Input
-                    id="location"
-                    required
-                    className="flex-grow pr-12"
-                    placeholder="Dirección completa (calle, número, barrio, ciudad)"
-                    value={formData.location}
-                    onChange={(e) => setFormData({...formData, location: e.target.value})}
-                  />
-                  <div className="absolute right-0 top-0 bottom-0 flex">
-                    {/* Botón para obtener ubicación GPS actual */}
-                    <button
-                      type="button"
-                      className="h-full px-2 bg-green-50 hover:bg-green-100 text-green-600 border-l border-gray-300 transition-colors flex items-center justify-center"
-                      onClick={() => {
-                        // Mostrar mensaje de cargando
-                        toast({
-                          title: "Obteniendo ubicación...",
-                          description: "Espera un momento mientras detectamos tu ubicación"
-                        });
-
-                        // Verificar si el navegador soporta geolocalización
-                        if (!navigator.geolocation) {
-                          toast({
-                            title: "Error",
-                            description: "Tu navegador no soporta la geolocalización",
-                            variant: "destructive"
-                          });
-                          return;
-                        }
-
-                        // Intentar obtener ubicación actual
-                        navigator.geolocation.getCurrentPosition(
-                          async (position) => {
-                            try {
-                              const { latitude, longitude } = position.coords;
-                              
-                              // Intentar conseguir la dirección desde coordenadas usando Nominatim (OpenStreetMap)
-                              const response = await fetch(
-                                `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`,
-                                { headers: { 'Accept-Language': 'es' } }
-                              );
-                              
-                              if (response.ok) {
-                                const data = await response.json();
-                                console.log("Geocoding response:", data);
-                                
-                                // Construir dirección formateada
-                                const address = data.address;
-                                const addressParts = [];
-                                
-                                // Construir dirección detallada
-                                const street = address.road || address.street || '';
-                                const houseNumber = address.house_number || '';
-                                if (street || houseNumber) {
-                                  addressParts.push(`${street} ${houseNumber}`.trim());
-                                }
-                                
-                                // Barrio o vecindario
-                                const neighbourhood = address.neighbourhood || address.suburb || '';
-                                if (neighbourhood) {
-                                  addressParts.push(neighbourhood);
-                                }
-                                
-                                // Ciudad
-                                const city = address.city || address.town || address.village || '';
-                                const state = address.state || '';
-                                if (city || state) {
-                                  addressParts.push([city, state].filter(Boolean).join(', '));
-                                }
-                                
-                                // Construir dirección completa
-                                const direccionCompleta = addressParts.join(' - ');
-                                
-                                // Actualizar el campo de ubicación
-                                if (direccionCompleta) {
-                                  setFormData({...formData, location: direccionCompleta});
-                                  toast({
-                                    title: "Ubicación detectada",
-                                    description: "Se ha usado tu ubicación actual"
-                                  });
-                                } else {
-                                  // Si no se pudo construir una dirección, usar las coordenadas
-                                  const coordsText = `Lat: ${latitude.toFixed(6)}, Lng: ${longitude.toFixed(6)}`;
-                                  setFormData({...formData, location: coordsText});
-                                  toast({
-                                    title: "Ubicación detectada",
-                                    description: "Se han usado tus coordenadas GPS"
-                                  });
-                                }
-                              } else {
-                                // Si falla la geocodificación, usar coordenadas directamente
-                                const coordsText = `Lat: ${latitude.toFixed(6)}, Lng: ${longitude.toFixed(6)}`;
-                                setFormData({...formData, location: coordsText});
-                                toast({
-                                  title: "Ubicación detectada parcialmente",
-                                  description: "Solo pudimos obtener las coordenadas GPS"
-                                });
-                              }
-                            } catch (error) {
-                              console.error("Error obteniendo dirección:", error);
-                              toast({
-                                title: "Error",
-                                description: "Hubo un problema al obtener tu ubicación",
-                                variant: "destructive"
-                              });
-                            }
-                          },
-                          (error) => {
-                            console.error("Error de geolocalización:", error);
-                            let errorMessage = "No se pudo obtener tu ubicación";
-                            
-                            // Mensajes más específicos según el error
-                            if (error.code === 1) {
-                              errorMessage = "Has denegado el permiso para acceder a tu ubicación. Para habilitarlo, revisa la configuración de permisos de tu navegador.";
-                            } else if (error.code === 2) {
-                              errorMessage = "Tu ubicación no está disponible en este momento.";
-                            } else if (error.code === 3) {
-                              errorMessage = "La solicitud de ubicación ha tardado demasiado.";
-                            }
-                            
-                            toast({
-                              title: "Error de ubicación",
-                              description: errorMessage,
-                              variant: "destructive"
-                            });
-                          },
-                          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-                        );
-                      }}
-                      title="Usar mi ubicación actual"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="12" cy="12" r="10"></circle>
-                        <circle cx="12" cy="12" r="1"></circle>
-                        <line x1="12" y1="2" x2="12" y2="5"></line>
-                        <line x1="12" y1="19" x2="12" y2="22"></line>
-                        <line x1="5" y1="12" x2="2" y2="12"></line>
-                        <line x1="22" y1="12" x2="19" y2="12"></line>
-                      </svg>
-                    </button>
-                    
-                    {/* Botón para usar dirección del perfil y rellenar todos los campos relacionados */}
-                    {userProfileData && (userProfileData.ubicompleta || userProfileData.location) && (
-                      <button
-                        type="button"
-                        className="h-full px-2 bg-blue-50 hover:bg-blue-100 text-blue-600 border-l border-gray-300 rounded-r-md transition-colors flex items-center justify-center"
-                        onClick={() => {
-                          // Construir dirección completa y detallada solo para el campo location
-                          let direccionCompleta = '';
-                          if (userProfileData.ubicompleta) {
-                            const detalles = [];
-                            if (userProfileData.ubicompleta.numeroCasa) {
-                              detalles.push(userProfileData.ubicompleta.numeroCasa);
-                            }
-                            if (userProfileData.ubicompleta.barrio) {
-                              detalles.push(userProfileData.ubicompleta.barrio);
-                            }
-                            if (userProfileData.ubicompleta.localidad || userProfileData.ubicompleta.ciudad) {
-                              detalles.push([
-                                userProfileData.ubicompleta.localidad || '',
-                                userProfileData.ubicompleta.ciudad || ''
-                              ].filter(Boolean).join(', '));
-                            }
-                            if (userProfileData.ubicompleta.especificaciones) {
-                              direccionCompleta = detalles.filter(Boolean).join(' - ') + ` (${userProfileData.ubicompleta.especificaciones})`;
-                            } else {
-                              direccionCompleta = detalles.filter(Boolean).join(' - ');
-                            }
-                            
-                            // Agregar enlace de Google Maps si existe
-                            const enlaceGoogleMaps = userProfileData.ubicompleta.enlaceGoogleMaps;
-                            if (enlaceGoogleMaps) {
-                              direccionCompleta += ` | Google Maps: ${enlaceGoogleMaps}`;
-                            }
-                          } else if (userProfileData.location) {
-                            direccionCompleta = userProfileData.location;
-                          }
-                          
-                          setFormData({
-                            ...formData,
-                            location: direccionCompleta
-                          });
-                          
-                          toast({
-                            title: "Ubicación agregada",
-                            description: userProfileData.ubicompleta?.enlaceGoogleMaps 
-                              ? "Se ha usado la dirección completa de tu perfil, incluyendo el enlace de Google Maps."
-                              : "Se ha usado la dirección completa de tu perfil."
-                          });
-                        }}
-                        title="Usar dirección de mi perfil"
-                      >
-                        <MapPin size={20} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-                <p className="text-xs text-gray-500 mt-1">
-                  Ingresa la dirección completa para que el proveedor pueda ubicarte correctamente
+                <select
+                  id="tipo"
+                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  value={formData.tipo}
+                  onChange={(e) => setFormData({...formData, tipo: e.target.value})}
+                >
+                  <option value="herramienta">🔨 Herramientas</option>
+                  <option value="herraje">🔩 Herrajes</option>
+                </select>
+                <p className="text-sm text-gray-500 mt-1">
+                  Selecciona si necesitas herramientas o herrajes para tu proyecto
                 </p>
               </div>
-
 
 
               <div>
