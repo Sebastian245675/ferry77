@@ -1,6 +1,7 @@
 // ...existing code...
 import React, { useState, useEffect } from 'react';
 import '../quote-fixes.css'; // Importar estilos de arreglo
+import { API_ENDPOINTS } from '../lib/config';
 // import eliminado porque ya está más abajo
 // import eliminado porque ya está más abajo
 
@@ -161,7 +162,11 @@ import { toast } from "../hooks/use-toast";
 
 import { useLocation } from "react-router-dom";
 
-const NewRequest = () => {
+interface NewRequestProps {
+  onBack?: () => void;
+}
+
+const NewRequest: React.FC<NewRequestProps> = ({ onBack }) => {
   const [companyProfileModal, setCompanyProfileModal] = useState({ open: false, data: null });
   const [userProfileData, setUserProfileData] = useState(null);
   const [showLocationSuggestion, setShowLocationSuggestion] = useState(false);
@@ -1301,9 +1306,15 @@ const NewRequest = () => {
         <div className="max-w-2xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
-              <Link to="/requests" className="p-2 hover:bg-gray-100 rounded-lg">
-                <ArrowLeft size={20} className="text-gray-600" />
-              </Link>
+              {onBack ? (
+                <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-lg">
+                  <ArrowLeft size={20} className="text-gray-600" />
+                </button>
+              ) : (
+                <Link to="/requests" className="p-2 hover:bg-gray-100 rounded-lg">
+                  <ArrowLeft size={20} className="text-gray-600" />
+                </Link>
+              )}
               <div>
                 <h1 className="text-xl font-bold text-gray-900">Nueva Solicitud</h1>
                 <p className="text-sm text-gray-600">Describe lo que necesitas</p>

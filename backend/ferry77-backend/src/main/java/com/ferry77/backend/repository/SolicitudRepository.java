@@ -54,4 +54,12 @@ public interface SolicitudRepository extends JpaRepository<Solicitud, Long> {
     // Buscar solicitudes recientes por ciudad (últimas 24 horas)
     @Query("SELECT s FROM Solicitud s WHERE s.ubicacion = :ciudad AND s.estado = 'pendiente' AND s.fechaCreacion >= :desde ORDER BY s.fechaCreacion DESC")
     List<Solicitud> findRecentesByCiudad(@Param("ciudad") String ciudad, @Param("desde") LocalDateTime desde);
+    
+    // Método principal para filtrar por ciudad (búsqueda parcial, insensible a mayúsculas)
+    @Query("SELECT s FROM Solicitud s WHERE LOWER(s.ubicacion) LIKE LOWER(CONCAT('%', :ciudad, '%')) ORDER BY s.fechaCreacion DESC")
+    List<Solicitud> findByUbicacionContaining(@Param("ciudad") String ciudad);
+    
+    // Método para filtrar por ciudad y estado
+    @Query("SELECT s FROM Solicitud s WHERE LOWER(s.ubicacion) LIKE LOWER(CONCAT('%', :ciudad, '%')) AND s.estado = :estado ORDER BY s.fechaCreacion DESC")
+    List<Solicitud> findByUbicacionContainingAndEstado(@Param("ciudad") String ciudad, @Param("estado") String estado);
 }

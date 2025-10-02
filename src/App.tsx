@@ -11,6 +11,7 @@ import Requests from "./pages/Requests";
 import Quotes from "./pages/Quotes";
 import Auth from "./pages/Auth";
 import NewRequest from "./pages/NewRequest";
+import NewRequestSelector from "./pages/NewRequestSelector";
 import CompanyProfile from "./pages/CompanyProfile";
 import Help from "./pages/Help";
 import Settings from "./pages/Settings";
@@ -27,6 +28,7 @@ import ProposalDetail from "./pages/ProposalDetail";
 import SolicitudCotizaciones from "./pages/SolicitudCotizaciones";
 import CotizacionDetalle from "./pages/CotizacionDetalle";
 import ProfilePage from "./pages/Profile";
+import QuickQuoteResponse from "./components/QuickQuoteResponse";
 import Pagos from "./backoficce/Pagos";
 import InventoryManager from "./pages/InventoryManager";
 import DeliveryDashboard from "./pages/DeliveryDashboard";
@@ -194,7 +196,7 @@ const App = () => {
                 <Route path="/requests" element={<Requests />} />
                 <Route path="/cotizaciones/:solicitudId" element={<SolicitudCotizaciones />} />
                 <Route path="/cotizacion-detalle/:proposalId" element={<CotizacionDetalle />} />
-                <Route path="/new-request" element={<NewRequest />} />
+                <Route path="/new-request" element={<NewRequestSelector />} />
                 <Route path="/quotes" element={<Quotes />} />
                 <Route path="/help" element={<Help />} />
                 <Route path="/settings" element={<Settings />} />
@@ -206,6 +208,7 @@ const App = () => {
                 <Route path="/backoffice/verification" element={<Verification />} />
                 <Route path="/backoffice/quotes" element={<PendingQuotes />} />
                 <Route path="/backoffice/quote-proposal" element={<QuoteProposal />} />
+                <Route path="/backoffice/quick-quote" element={<QuickQuoteResponse />} />
                 <Route path="/backoffice/pagos" element={<Pagos />} />
                 <Route path="/backoffice/reviews" element={<Reviews />} />
                 <Route path="/company-panel" element={<DashboardEmpresas />} />

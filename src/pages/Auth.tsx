@@ -53,6 +53,8 @@ const Auth = () => {
   const [isCompany, setIsCompany] = useState(false);
   const [showSoon, setShowSoon] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [lastAttempt, setLastAttempt] = useState<number>(0);
+  const [attemptCount, setAttemptCount] = useState<number>(0);
   
   // Estados para el flujo de verificación por email
   const [emailVerificationStep, setEmailVerificationStep] = useState<'email' | 'verification' | 'password' | 'complete'>('email');
@@ -317,7 +319,20 @@ const Auth = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    
+    // Implementar cooldown para evitar intentos repetidos
+    const now = Date.now();
+    const timeSinceLastAttempt = now - lastAttempt;
+    const cooldownTime = attemptCount >= 3 ? 30000 : attemptCount >= 2 ? 10000 : 0; // 0s, 10s, 30s
+    
+    if (timeSinceLastAttempt < cooldownTime) {
+      const remainingTime = Math.ceil((cooldownTime - timeSinceLastAttempt) / 1000);
+      setError(`Espera ${remainingTime} segundos antes de intentar nuevamente.`);
+      return;
+    }
+    
     setIsLoading(true);
+    setLastAttempt(now);
     
     try {
       if (isLogin) {
@@ -360,7 +375,36 @@ const Auth = () => {
       }
     } catch (err: any) {
       console.error("Error en autenticación:", err);
-      setError(err.message);
+      
+      // Incrementar contador de intentos fallidos
+      setAttemptCount(prev => prev + 1);
+      
+      // Manejo específico de errores de Firebase
+      let errorMessage = '';
+      switch (err.code) {
+        case 'auth/invalid-credential':
+          errorMessage = 'Credenciales incorrectas. Verifica tu email y contraseña.';
+          break;
+        case 'auth/too-many-requests':
+          errorMessage = 'Demasiados intentos fallidos. Espera unos minutos antes de intentar nuevamente.';
+          break;
+        case 'auth/user-not-found':
+          errorMessage = 'No existe una cuenta con este email.';
+          break;
+        case 'auth/wrong-password':
+          errorMessage = 'Contraseña incorrecta.';
+          break;
+        case 'auth/invalid-email':
+          errorMessage = 'Email inválido.';
+          break;
+        case 'auth/network-request-failed':
+          errorMessage = 'Error de conexión. Verifica tu conexión a internet.';
+          break;
+        default:
+          errorMessage = err.message || 'Error de autenticación';
+      }
+      
+      setError(errorMessage);
     } finally {
       setIsLoading(false);
     }

@@ -2,12 +2,16 @@ package com.ferry77.backend.controller;
 
 import com.ferry77.backend.dto.CreateProposalRequest;
 import com.ferry77.backend.dto.ProposalResponse;
+import com.ferry77.backend.dto.QuickResponseDTO;
+import com.ferry77.backend.model.QuickResponse;
 import com.ferry77.backend.service.ProposalService;
+// import com.ferry77.backend.service.QuickResponseService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.Map;
@@ -19,6 +23,9 @@ public class ProposalController {
 
     @Autowired
     private ProposalService proposalService;
+
+    // @Autowired
+    // private QuickResponseService quickResponseService;
 
     @PostMapping
     public ResponseEntity<?> createProposal(@RequestBody CreateProposalRequest request) {
@@ -164,6 +171,112 @@ public class ProposalController {
             );
             
             return ResponseEntity.ok(stats);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Error interno del servidor"));
+        }
+    }
+
+    // === ENDPOINTS PARA RESPUESTAS RÁPIDAS ===
+    // Temporarily commented out due to missing QuickResponseService
+
+    // @PostMapping("/quick-response")
+    // public ResponseEntity<?> createQuickResponse(
+    //         @RequestParam("companyId") Long companyId,
+    //         @RequestParam("solicitudId") Long solicitudId,
+    //         @RequestParam("companyName") String companyName,
+    //         @RequestParam("responseType") String responseType,
+    //         @RequestParam(value = "message", required = false) String message,
+    //         @RequestParam(value = "file", required = false) MultipartFile file) {
+    //     
+    //     try {
+    //         QuickResponse response = quickResponseService.createQuickResponseWithFile(
+    //             companyId, companyName, solicitudId, responseType, message, file);
+    //         
+    //         return ResponseEntity.ok(Map.of(
+    //             "message", "Respuesta rápida enviada exitosamente",
+    //             "responseId", response.getId(),
+    //             "status", response.getStatus()
+    //         ));
+    //     } catch (RuntimeException e) {
+    //         return ResponseEntity.badRequest()
+    //                 .body(Map.of("error", e.getMessage()));
+    //     } catch (Exception e) {
+    //         System.err.println("Error creando respuesta rápida: " + e.getMessage());
+    //         e.printStackTrace();
+    //         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+    //                 .body(Map.of("error", "Error interno del servidor"));
+    //     }
+    // }
+
+    @GetMapping("/quick-responses/solicitud/{solicitudId}")
+    public ResponseEntity<?> getQuickResponsesBySolicitud(@PathVariable Long solicitudId) {
+        try {
+            // List<QuickResponse> responses = quickResponseService.getResponsesBySolicitud(solicitudId);
+            // return ResponseEntity.ok(responses);
+            return ResponseEntity.ok(java.util.Collections.emptyList()); // Temporary
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Error interno del servidor"));
+        }
+    }
+
+    @GetMapping("/quick-responses/company/{companyId}")
+    public ResponseEntity<?> getQuickResponsesByCompany(
+            @PathVariable Long companyId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        try {
+            // Page<QuickResponse> responses = quickResponseService.getResponsesByCompany(
+            //     companyId, org.springframework.data.domain.PageRequest.of(page, size));
+            // return ResponseEntity.ok(responses);
+            return ResponseEntity.ok(new org.springframework.data.domain.PageImpl<>(java.util.Collections.emptyList())); // Temporary
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Error interno del servidor"));
+        }
+    }
+
+    @GetMapping("/quick-responses/{id}")
+    public ResponseEntity<?> getQuickResponseById(@PathVariable Long id) {
+        try {
+            // QuickResponse response = quickResponseService.getResponseById(id);
+            // if (response != null) {
+            //     return ResponseEntity.ok(response);
+            // } else {
+                return ResponseEntity.notFound().build();
+            // }
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Error interno del servidor"));
+        }
+    }
+
+    @PutMapping("/quick-responses/{id}/status")
+    public ResponseEntity<?> updateQuickResponseStatus(
+            @PathVariable Long id,
+            @RequestParam String status) {
+        try {
+            // QuickResponse response = quickResponseService.updateResponseStatus(id, status);
+            // if (response != null) {
+            //     return ResponseEntity.ok(response);
+            // } else {
+                return ResponseEntity.notFound().build();
+            // }
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Error interno del servidor"));
+        }
+    }
+
+    @GetMapping("/quick-responses/check/{companyId}/{solicitudId}")
+    public ResponseEntity<?> checkIfCompanyResponded(
+            @PathVariable Long companyId, 
+            @PathVariable Long solicitudId) {
+        try {
+            // boolean hasResponded = quickResponseService.hasCompanyResponded(companyId, solicitudId);
+            // return ResponseEntity.ok(Map.of("hasResponded", hasResponded));
+            return ResponseEntity.ok(Map.of("hasResponded", false)); // Temporary
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("error", "Error interno del servidor"));

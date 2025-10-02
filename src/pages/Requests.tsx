@@ -3,6 +3,7 @@ import { getAuth } from "firebase/auth";
 import { collection, query, where, getDocs, onSnapshot, updateDoc, doc, addDoc, getDoc } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { solicitudesAPI, SolicitudBackend } from "../lib/api";
+import { getImageUrl, isValidImageUrl } from '../lib/imageUtils';
 import Navbar from '../components/Navbar';
 import BottomNavigation from '../components/BottomNavigation';
 import RequestCard from '../components/RequestCard';
@@ -143,6 +144,9 @@ const Requests = () => {
   const [reportedRequests, setReportedRequests] = useState<string[]>([]);
   // Estado para mostrar mensaje de éxito
   const [showSuccessMessage, setShowSuccessMessage] = useState(false);
+  // Estados para modal de imagen
+  const [showImageModal, setShowImageModal] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<{ url: string; alt: string } | null>(null);
 
   // Detect autoQuoteId in URL
   const location = useLocation();
@@ -321,6 +325,19 @@ const Requests = () => {
         const backendData = await solicitudesAPI.getUserSolicitudes(user.uid);
         setBackendSolicitudes(backendData);
         console.log(`Cargadas ${backendData.length} solicitudes del backend`);
+        
+        // Log específico para imágenes
+        backendData.forEach(solicitud => {
+          console.log(`Solicitud ${solicitud.id}:`, solicitud.titulo);
+          solicitud.items.forEach(item => {
+            console.log(`  - Item ${item.nombre}:`, {
+              id: item.id,
+              imagenUrl: item.imagenUrl,
+              hasImage: !!item.imagenUrl,
+              completeItem: item // Objeto completo para debug
+            });
+          });
+        });
         
         // 2. Para cada solicitud, obtener el número de cotizaciones
         const solicitudesConCotizaciones = await Promise.all(
@@ -753,13 +770,30 @@ const Requests = () => {
                 <p className="text-gray-600">Gestiona todas tus solicitudes de herramientas</p>
               </div>
               
-              <Link 
-                to="/new-request"
-                className="bg-primary-600 hover:bg-primary-700 text-white px-6 py-3 rounded-lg font-semibold transition-colors flex items-center space-x-2 w-fit"
-              >
-                <Plus size={20} />
-                <span>Nueva Solicitud</span>
-              </Link>
+              <div className="flex gap-3">
+                <Link 
+                  to="/new-request"
+                  className="bg-primary-600 hover:bg-primary-700 text-white px-6 py-3 rounded-lg font-semibold transition-colors flex items-center space-x-2 w-fit"
+                >
+                  <Plus size={20} />
+                  <span>Nueva Solicitud</span>
+                </Link>
+                
+                {/* Botón de prueba para modal de imagen */}
+                <button
+                  onClick={() => {
+                    console.log('🧪 Probando modal de imagen...');
+                    setSelectedImage({
+                      url: 'https://via.placeholder.com/400x300?text=Imagen+de+Prueba',
+                      alt: 'Imagen de prueba'
+                    });
+                    setShowImageModal(true);
+                  }}
+                  className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2"
+                >
+                  👁️ Ver Imagen
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1103,15 +1137,76 @@ const Requests = () => {
                         <div className="mb-2">
                           <span className="font-semibold text-gray-800">Estado actual:</span> {request.status}
                         </div>
-                        {/* Lista de productos */}
+                        {/* Lista de productos con imágenes */}
                         {request.items && request.items.length > 0 && (
-                          <div className="mb-2">
-                            <span className="font-semibold text-gray-800">Productos:</span>
-                            <ul className="list-disc pl-5 text-xs mt-1">
-                              {request.items.map((item, idx) => (
-                                <li key={idx}>{item.name} x{item.quantity}</li>
-                              ))}
-                            </ul>
+                          <div className="mb-4">
+                            <span className="font-semibold text-gray-800 block mb-2">Productos solicitados:</span>
+                            <div className="grid grid-cols-1 gap-3">
+                              {request.items.map((item, idx) => {
+                                // Buscar el item correspondiente en backendSolicitudes para obtener la imagenUrl
+                                const backendSolicitud = backendSolicitudes.find(s => `backend_${s.id}` === request.id);
+                                const backendItem = backendSolicitud?.items.find(bi => bi.nombre === item.name);
+                                const imageUrl = getImageUrl(backendItem?.imagenUrl);
+                                const hasImage = isValidImageUrl(imageUrl);
+                                
+                                return (
+                                  <div key={idx} className="flex items-center bg-white rounded-lg p-3 border border-gray-200 shadow-sm">
+                                    {/* Imagen del producto */}
+                                    <div className="w-16 h-16 mr-4 flex-shrink-0 relative overflow-hidden rounded-lg bg-gray-50 border border-gray-200">
+                                      {hasImage ? (
+                                        <img 
+                                          src={imageUrl}
+                                          alt={item.name}
+                                          className="w-full h-full object-cover cursor-pointer hover:scale-105 transition-transform"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setSelectedImage({
+                                              url: imageUrl,
+                                              alt: item.name
+                                            });
+                                            setShowImageModal(true);
+                                          }}
+                                        />
+                                      ) : (
+                                        <div className="w-full h-full flex items-center justify-center">
+                                          <span className="text-xs text-gray-400">Sin imagen</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                    
+                                    {/* Información del producto */}
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center justify-between">
+                                        <div className="flex-1">
+                                          <p className="font-medium text-gray-900 truncate">{item.name}</p>
+                                          <p className="text-gray-500">Cantidad: {item.quantity}</p>
+                                          {item.specifications && (
+                                            <p className="text-xs text-gray-400 truncate">{item.specifications}</p>
+                                          )}
+                                        </div>
+                                        
+                                        {/* Botón Ver Imagen si existe */}
+                                        {hasImage && (
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setSelectedImage({
+                                                url: imageUrl,
+                                                alt: item.name
+                                              });
+                                              setShowImageModal(true);
+                                            }}
+                                            className="ml-2 px-3 py-1 bg-blue-500 hover:bg-blue-600 text-white text-xs rounded-md transition-colors"
+                                          >
+                                            👁️ Ver Imagen
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
                           </div>
                         )}
                         {/* Botón para reportar pedido - solo para pedidos entregados */}
@@ -1186,15 +1281,42 @@ const Requests = () => {
                     {request.items && request.items.length > 0 && (
                       <div className="mb-3">
                         <ul className="space-y-1.5">
-                          {request.items.slice(0, 3).map((item, idx) => (
-                            <li key={idx} className="flex items-center text-sm text-gray-700">
-                              <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mr-2 flex-shrink-0"></div>
-                              <div className="flex-1 flex items-center justify-between">
-                                <span className="font-medium truncate mr-2">{item.name}</span>
-                                <span className="text-xs bg-gray-100 px-2 py-0.5 rounded-full">x{item.quantity}</span>
-                              </div>
-                            </li>
-                          ))}
+                          {request.items.slice(0, 3).map((item, idx) => {
+                            // Buscar el item correspondiente en backendSolicitudes para obtener la imagenUrl
+                            const backendSolicitud = backendSolicitudes.find(s => `backend_${s.id}` === request.id);
+                            const backendItem = backendSolicitud?.items.find(bi => bi.nombre === item.name);
+                            const imageUrl = getImageUrl(backendItem?.imagenUrl);
+                            const hasImage = isValidImageUrl(imageUrl);
+                            
+                            return (
+                              <li key={idx} className="flex items-center text-sm text-gray-700 bg-gray-50 rounded-lg p-2">
+                                <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mr-2 flex-shrink-0"></div>
+                                <div className="flex-1 flex items-center justify-between">
+                                  <div className="flex-1 min-w-0">
+                                    <span className="font-medium truncate mr-2">{item.name}</span>
+                                    <div className="flex items-center gap-2 mt-1">
+                                      <span className="text-xs bg-gray-100 px-2 py-0.5 rounded-full">x{item.quantity}</span>
+                                      {hasImage && (
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setSelectedImage({
+                                              url: imageUrl,
+                                              alt: item.name
+                                            });
+                                            setShowImageModal(true);
+                                          }}
+                                          className="text-xs bg-blue-500 hover:bg-blue-600 text-white px-2 py-0.5 rounded-full transition-colors"
+                                        >
+                                          👁️ Ver imagen
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              </li>
+                            );
+                          })}
                           {request.items.length > 3 && (
                             <li className="text-xs text-blue-600 pl-3.5 mt-1">
                               + {request.items.length - 3} artículos más
@@ -1748,6 +1870,31 @@ const Requests = () => {
               >
                 Entendido
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de imagen en tamaño completo */}
+        {showImageModal && selectedImage && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-75" onClick={() => setShowImageModal(false)}>
+            <div className="relative max-w-4xl max-h-[90vh] w-full h-full flex items-center justify-center p-4">
+              <button
+                onClick={() => setShowImageModal(false)}
+                className="absolute top-4 right-4 z-10 bg-black bg-opacity-50 hover:bg-opacity-70 text-white rounded-full p-2 transition-colors"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-6 h-6">
+                  <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+                </svg>
+              </button>
+              <img
+                src={selectedImage.url}
+                alt={selectedImage.alt}
+                className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+              />
+              <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black bg-opacity-50 text-white px-4 py-2 rounded-lg">
+                <p className="text-sm font-medium">{selectedImage.alt}</p>
+              </div>
             </div>
           </div>
         )}

@@ -205,4 +205,110 @@ public class NotificationController {
             return ResponseEntity.internalServerError().build();
         }
     }
+
+    // ========== ENDPOINTS ESPECÍFICOS PARA EMPRESAS ==========
+    
+    /**
+     * Obtener notificaciones de una empresa con paginación
+     * Las empresas usan su firebaseUid como identificador
+     */
+    @GetMapping("/empresas/{uid}/notifications")
+    public ResponseEntity<Page<Notification>> getCompanyNotifications(
+            @PathVariable("uid") String uid,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        
+        try {
+            Pageable pageable = PageRequest.of(page, size);
+            Page<Notification> notifications = notificationRepository.findByUsuarioIdOrderByCreatedAtDesc(uid, pageable);
+            
+            System.out.println("[NotificationController] Consultadas " + notifications.getContent().size() + 
+                             " notificaciones para empresa " + uid);
+            
+            return ResponseEntity.ok(notifications);
+            
+        } catch (Exception e) {
+            System.err.println("[NotificationController] Error obteniendo notificaciones de empresa: " + e.getMessage());
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    /**
+     * Obtener solo notificaciones no leídas para empresa
+     */
+    @GetMapping("/empresas/{uid}/notifications/unread")
+    public ResponseEntity<Page<Notification>> getCompanyUnreadNotifications(
+            @PathVariable("uid") String uid,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        
+        try {
+            Pageable pageable = PageRequest.of(page, size);
+            Page<Notification> notifications = notificationRepository.findByUsuarioIdAndLeidaFalseOrderByCreatedAtDesc(uid, pageable);
+            
+            return ResponseEntity.ok(notifications);
+            
+        } catch (Exception e) {
+            System.err.println("[NotificationController] Error obteniendo notificaciones no leídas de empresa: " + e.getMessage());
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    /**
+     * Contar notificaciones no leídas para empresa
+     */
+    @GetMapping("/empresas/{uid}/notifications/unread-count")
+    public ResponseEntity<Map<String, Long>> getCompanyUnreadCount(@PathVariable("uid") String uid) {
+        try {
+            long count = notificationRepository.countByUsuarioIdAndLeidaFalse(uid);
+            
+            Map<String, Long> response = new HashMap<>();
+            response.put("unreadCount", count);
+            
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            System.err.println("[NotificationController] Error contando notificaciones no leídas de empresa: " + e.getMessage());
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    /**
+     * Marcar todas las notificaciones de una empresa como leídas
+     */
+    @PutMapping("/empresas/{uid}/notifications/read-all")
+    public ResponseEntity<Map<String, Integer>> markAllCompanyNotificationsAsRead(@PathVariable("uid") String uid) {
+        try {
+            int updatedCount = notificationRepository.markAllAsReadByUsuarioId(uid);
+            
+            Map<String, Integer> response = new HashMap<>();
+            response.put("updatedCount", updatedCount);
+            
+            System.out.println("[NotificationController] " + updatedCount + 
+                             " notificaciones marcadas como leídas para empresa " + uid);
+            
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            System.err.println("[NotificationController] Error marcando todas las notificaciones de empresa como leídas: " + e.getMessage());
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    /**
+     * Obtener notificaciones recientes para empresa (últimas 24 horas)
+     */
+    @GetMapping("/empresas/{uid}/notifications/recent")
+    public ResponseEntity<List<Notification>> getCompanyRecentNotifications(@PathVariable("uid") String uid) {
+        try {
+            LocalDateTime since = LocalDateTime.now().minusHours(24);
+            List<Notification> notifications = notificationRepository.findRecentByUsuarioId(uid, since);
+            
+            return ResponseEntity.ok(notifications);
+            
+        } catch (Exception e) {
+            System.err.println("[NotificationController] Error obteniendo notificaciones recientes de empresa: " + e.getMessage());
+            return ResponseEntity.internalServerError().build();
+        }
+    }
 }

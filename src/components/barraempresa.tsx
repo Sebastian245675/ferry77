@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import BottomNavigationEmpresa from "./BottomNavigationEmpresa";
+import CompanyNotificationBadge from "./CompanyNotificationBadge";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -160,22 +161,27 @@ const logout = async () => {
         </div>
       </div>
       
-      {/* Avatar flotante con menú de opciones en la esquina superior derecha */}
+      {/* Header flotante con notificaciones y avatar en la esquina superior derecha */}
       <div className={`fixed top-4 right-4 z-50 transition-all duration-300 ${
         showFloatingElements ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-full pointer-events-none'
       }`}>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" className="bg-white rounded-full shadow-md p-1 hover:bg-blue-50">
-              <Avatar className="h-8 w-8">
-                <AvatarImage src={company?.profileImage} />
-                <AvatarFallback className="bg-primary text-white text-xs">
-                  {company?.name.charAt(0)}
-                </AvatarFallback>
-              </Avatar>
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="bg-white w-48">
+        <div className="flex items-center space-x-3">
+          {/* Campanita de notificaciones */}
+          <CompanyNotificationBadge />
+          
+          {/* Avatar con menú desplegable */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" className="bg-white rounded-full shadow-md p-1 hover:bg-blue-50">
+                <Avatar className="h-8 w-8">
+                  <AvatarImage src={company?.profileImage} />
+                  <AvatarFallback className="bg-primary text-white text-xs">
+                    {company?.name.charAt(0)}
+                  </AvatarFallback>
+                </Avatar>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="bg-white w-48">
             <div className="px-2 py-1.5 text-sm font-medium text-center border-b">
               {company?.name}
               {company?.isVerified && (
@@ -196,6 +202,7 @@ const logout = async () => {
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        </div>
       </div>
 
       <div className="flex">

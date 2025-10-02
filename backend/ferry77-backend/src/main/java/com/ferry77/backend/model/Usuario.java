@@ -19,6 +19,7 @@ public class Usuario {
     
     @NotBlank(message = "El email es obligatorio")
     @Email(message = "El email no es válido")
+    @Column(unique = true)
     private String email;
     
     @NotBlank(message = "El teléfono es obligatorio")

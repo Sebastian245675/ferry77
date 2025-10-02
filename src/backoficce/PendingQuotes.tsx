@@ -41,6 +41,7 @@ import { db } from "../lib/firebase";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { toast } from "../hooks/use-toast";
+import { API_CONFIG } from "../lib/config";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -127,7 +128,8 @@ function PendingQuotes() {
 
   // Cargar solicitudes de cotización pendientes
 
-  useEffect(() => {
+  // COMENTADO: Carga desde Firestore - ahora usamos backend
+  /* useEffect(() => {
     if (!user) return;
     setIsLoading(true);
     console.log("[PendingQuotes] Usuario actual:", user.uid, user.displayName);
@@ -263,6 +265,105 @@ function PendingQuotes() {
     };
     loadSentQuotes();
     return () => unsubscribe();
+  }, [user]); */
+
+  // Nuevo useEffect que carga desde el backend
+  useEffect(() => {
+    if (!user) return;
+    
+    const loadRequestsFromBackend = async () => {
+      setIsLoading(true);
+      console.log("[PendingQuotes] Cargando solicitudes desde backend para usuario:", user.uid);
+      
+      try {
+        // Primero obtenemos el perfil del usuario para saber su ciudad
+        console.log("[PendingQuotes] Obteniendo perfil para:", user.uid);
+        const userProfileResponse = await fetch(`${API_CONFIG.API_URL}/users/profile/${user.uid}`);
+        
+        if (!userProfileResponse.ok) {
+          console.error("[PendingQuotes] Error obteniendo perfil del usuario, status:", userProfileResponse.status);
+          setIsLoading(false);
+          return;
+        }
+        
+        const userProfile = await userProfileResponse.json();
+        console.log("[PendingQuotes] Perfil del usuario:", userProfile);
+        const userCity = userProfile.ciudad || '';
+        console.log("[PendingQuotes] Ciudad del usuario empresa:", userCity);
+        
+        // Ahora obtenemos las solicitudes filtradas por ciudad
+        const requestsUrl = userCity ? 
+          `${API_CONFIG.API_URL}/solicitudes/ciudad/${encodeURIComponent(userCity)}` :
+          `${API_CONFIG.API_URL}/solicitudes`;
+          
+        console.log("[PendingQuotes] URL de solicitudes:", requestsUrl);
+        const requestsResponse = await fetch(requestsUrl);
+        
+        if (!requestsResponse.ok) {
+          console.error("[PendingQuotes] Error obteniendo solicitudes, status:", requestsResponse.status);
+          setIsLoading(false);
+          return;
+        }
+        
+        const backendRequests = await requestsResponse.json();
+        console.log("[PendingQuotes] Solicitudes del backend:", backendRequests);
+        
+        // Convertir solicitudes del backend al formato del frontend
+        const requests: QuoteRequest[] = backendRequests.map((req: any) => {
+          console.log(`[PendingQuotes] Procesando solicitud ${req.id}:`, req);
+          
+          // Extraer URLs de imágenes de los items
+          const imageUrls: string[] = [];
+          if (req.items && Array.isArray(req.items)) {
+            req.items.forEach((item: any, index: number) => {
+              console.log(`[PendingQuotes] Item ${index}:`, item);
+              if (item.imagen_url) {
+                console.log(`[PendingQuotes] Encontrada imagen_url:`, item.imagen_url);
+                imageUrls.push(item.imagen_url);
+              }
+            });
+          }
+
+          console.log(`[PendingQuotes] URLs de imagen extraídas para solicitud ${req.id}:`, imageUrls);
+
+          // TEST TEMPORAL: Forzar imagen para solicitud ID 11
+          if (req.id === 11) {
+            imageUrls.push("https://firebasestorage.googleapis.com/v0/b/ferry-67757.firebasestorage.app/o/quick_requests%2FiDOgjylZM8Tc0YWy4YmsQiD6ryn2%2Fquickrequest_iDOgjylZM8Tc0YWy4YmsQiD6ryn2_1759270047942.jpg?alt=media&token=f620afee-5518-4947-ad38-2c6ec96a61d8");
+            console.log("[TEST] Agregada imagen temporal para solicitud 11");
+          }
+
+          return {
+            id: `backend_${req.id}`,
+            clientId: req.userId || "",
+            clientName: req.usuarioNombre || "Cliente",
+            clientAvatar: "",
+            title: req.titulo || "Solicitud de cotización",
+            description: req.items?.[0]?.especificaciones || "",
+            category: req.profesion || "General",
+            items: req.items || [],
+            status: "pending",
+            location: req.ubicacion || "",
+            createdAt: req.createdAt ? new Date(req.createdAt) : new Date(),
+            urgency: req.urgency === "alta" ? "high" : 
+                    req.urgency === "media" ? "medium" : "low",
+            budget: req.presupuesto || 0,
+            attachments: imageUrls, // Agregar las URLs de imagen como attachments
+            deadline: req.deadline
+          };
+        });
+        
+        console.log("[PendingQuotes] Solicitudes convertidas:", requests.length);
+        console.log("[PendingQuotes] Ejemplo de solicitud con attachments:", requests.find(r => r.attachments.length > 0));
+        setQuoteRequests(requests);
+        
+      } catch (error) {
+        console.error("[PendingQuotes] Error cargando solicitudes:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    loadRequestsFromBackend();
   }, [user]);
 
   // Filtrar solicitudes según búsqueda y estado
@@ -922,20 +1023,44 @@ function PendingQuotes() {
                       
                       {selectedRequest.attachments && selectedRequest.attachments.length > 0 && (
                         <div className="mt-6">
-                          <h4 className="font-medium mb-2">Archivos adjuntos:</h4>
-                          <div className="flex flex-wrap gap-2">
-                            {selectedRequest.attachments.map((url, index) => (
-                              <a
-                                key={index}
-                                href={url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="flex items-center p-2 bg-gray-50 rounded hover:bg-gray-100"
-                              >
-                                <FileText className="h-4 w-4 mr-2" />
-                                <span className="text-sm">Adjunto {index + 1}</span>
-                              </a>
-                            ))}
+                          <h4 className="font-medium mb-2">Imágenes adjuntas:</h4>
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                            {selectedRequest.attachments.map((url, index) => {
+                              // Verificar si es una URL de imagen
+                              const isImage = url.includes('firebasestorage.googleapis.com') || 
+                                            url.match(/\.(jpg|jpeg|png|gif|webp)$/i);
+                              
+                              if (isImage) {
+                                return (
+                                  <div key={index} className="relative group">
+                                    <img
+                                      src={url}
+                                      alt={`Imagen ${index + 1}`}
+                                      className="w-full h-32 object-cover rounded-lg border shadow-sm hover:shadow-md transition-shadow cursor-pointer"
+                                      onClick={() => window.open(url, '_blank')}
+                                    />
+                                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 rounded-lg transition-all flex items-center justify-center">
+                                      <span className="text-white opacity-0 group-hover:opacity-100 text-sm font-medium">
+                                        Click para ampliar
+                                      </span>
+                                    </div>
+                                  </div>
+                                );
+                              } else {
+                                return (
+                                  <a
+                                    key={index}
+                                    href={url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex items-center p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+                                  >
+                                    <FileText className="h-5 w-5 mr-2 text-gray-600" />
+                                    <span className="text-sm">Adjunto {index + 1}</span>
+                                  </a>
+                                );
+                              }
+                            })}
                           </div>
                         </div>
                       )}

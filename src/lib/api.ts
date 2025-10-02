@@ -16,6 +16,7 @@ export type SolicitudBackend = {
   usuarioId: string;
   usuarioNombre: string;
   usuarioEmail: string;
+  telefono?: string; // Teléfono del usuario para WhatsApp
   titulo: string;
   profesion: string;
   tipo: string; // herramienta o herraje

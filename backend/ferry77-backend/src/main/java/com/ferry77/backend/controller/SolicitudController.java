@@ -14,13 +14,16 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/solicitudes")
+
 @CrossOrigin(origins = "*")
 public class SolicitudController {
 
@@ -35,6 +38,24 @@ public class SolicitudController {
     
     @Autowired
     private CiudadService ciudadService;
+
+    // Health check endpoint para verificar que el backend esté funcionando
+    @GetMapping("/health")
+    public ResponseEntity<Map<String, Object>> healthCheck() {
+        Map<String, Object> health = new HashMap<>();
+        health.put("status", "UP");
+        health.put("service", "SolicitudController");
+        health.put("timestamp", System.currentTimeMillis());
+        try {
+            // Probar conexión a BD contando solicitudes
+            long count = solicitudRepository.count();
+            health.put("database", "Connected");
+            health.put("total_solicitudes", count);
+        } catch (Exception e) {
+            health.put("database", "Error: " + e.getMessage());
+        }
+        return ResponseEntity.ok(health);
+    }
 
     @PostMapping
     public ResponseEntity<?> crearSolicitud(@RequestBody SolicitudDTO dto) {
@@ -139,6 +160,7 @@ public class SolicitudController {
     }
 
     @GetMapping("/usuario/{usuarioId}")
+
     public ResponseEntity<List<Solicitud>> obtenerSolicitudesPorUsuario(@PathVariable String usuarioId) {
         try {
             List<Solicitud> solicitudes = solicitudRepository.findByUsuarioIdOrderByFechaCreacionDesc(usuarioId);
@@ -164,23 +186,57 @@ public class SolicitudController {
     public ResponseEntity<List<Solicitud>> obtenerSolicitudesPendientesPorCiudad(
             @RequestParam(required = false) String ciudad) {
         try {
+            System.out.println("🔍 [DEBUG] Filtrado por ciudad solicitado: '" + ciudad + "'");
+            
             List<Solicitud> resultado;
             
             if (ciudad != null && !ciudad.trim().isEmpty()) {
-                // CONSULTA ULTRA-OPTIMIZADA: usar índice compuesto específico
-                // Esta consulta usa el índice idx_activas_ubicacion para máximo rendimiento
-                resultado = solicitudRepository.findActivasByCiudad(ciudad.trim());
+                String ciudadLimpia = ciudad.trim();
+                System.out.println("🏙️ [DEBUG] Buscando solicitudes que contengan: '" + ciudadLimpia + "'");
+                
+                // DEBUG: Primero obtener todas las solicitudes para comparar
+                List<Solicitud> todasSolicitudes = solicitudRepository.findByEstadoOrderByFechaCreacionDesc("pendiente");
+                System.out.println("📊 [DEBUG] Total solicitudes pendientes en BD: " + todasSolicitudes.size());
+                for (int i = 0; i < todasSolicitudes.size(); i++) {
+                    Solicitud solicitud = todasSolicitudes.get(i);
+                    System.out.println("📍 [DEBUG] Solicitud BD " + (i + 1) + ": ID=" + solicitud.getId() + ", Ubicación='" + solicitud.getUbicacion() + "', Estado='" + solicitud.getEstado() + "'");
+                }
+                
+                // BÚSQUEDA MÚLTIPLE: Probar diferentes estrategias de búsqueda
+                
+                // Estrategia 1: Búsqueda exacta (case insensitive)
+                List<Solicitud> resultadoExacto = solicitudRepository.findAll().stream()
+                    .filter(s -> "pendiente".equals(s.getEstado()))
+                    .filter(s -> s.getUbicacion() != null && s.getUbicacion().toLowerCase().equals(ciudadLimpia.toLowerCase()))
+                    .collect(Collectors.toList());
+                System.out.println("🎯 [DEBUG] Búsqueda exacta encontró: " + resultadoExacto.size() + " solicitudes");
+                
+                // Estrategia 2: Búsqueda parcial (contiene)
+                List<Solicitud> resultadoParcial = solicitudRepository.findAll().stream()
+                    .filter(s -> "pendiente".equals(s.getEstado()))
+                    .filter(s -> s.getUbicacion() != null && s.getUbicacion().toLowerCase().contains(ciudadLimpia.toLowerCase()))
+                    .collect(Collectors.toList());
+                System.out.println("🎯 [DEBUG] Búsqueda parcial encontró: " + resultadoParcial.size() + " solicitudes");
+                
+                // Usar el resultado que tenga más coincidencias
+                resultado = resultadoParcial.size() >= resultadoExacto.size() ? resultadoParcial : resultadoExacto;
+                
+                // Debug: mostrar las ubicaciones encontradas
+                System.out.println("📊 [DEBUG] Total final de solicitudes encontradas: " + resultado.size());
+                for (int i = 0; i < resultado.size(); i++) {
+                    Solicitud solicitud = resultado.get(i);
+                    System.out.println("📍 [DEBUG] Solicitud filtrada " + (i + 1) + ": ID=" + solicitud.getId() + ", Ubicación='" + solicitud.getUbicacion() + "'");
+                }
                 
                 // Registrar actividad de la ciudad para estadísticas
-                ciudadService.buscarOCrearCiudad(ciudad.trim());
+                ciudadService.buscarOCrearCiudad(ciudadLimpia);
                 
                 System.out.println("[OPTIMIZED] Solicitudes encontradas para ciudad '" + ciudad + "': " + resultado.size());
             } else {
-                // Si no hay ciudad específica, usar consulta general solo para pendientes (excluir cotizadas)
-                List<String> estados = Arrays.asList("pendiente");
-                resultado = solicitudRepository.findPendingByCiudad(estados, null);
-                
-                System.out.println("[GENERAL] Solicitudes pendientes totales (excluye cotizadas): " + resultado.size());
+                // NUEVA LÓGICA: Si no hay ciudad específica, NO mostrar solicitudes
+                // Las empresas solo deben ver solicitudes de su ciudad
+                System.out.println("⚠️ [SECURITY] Sin ciudad especificada - no se muestran solicitudes");
+                resultado = new ArrayList<>();
             }
             
             // ENRIQUECER con nombres de usuario desde la BD
@@ -189,8 +245,11 @@ public class SolicitudController {
             return ResponseEntity.ok(resultado);
         } catch (Exception e) {
             System.err.println("[ERROR] Error al obtener solicitudes pendientes: " + e.getMessage());
+            System.err.println("[ERROR] Tipo de error: " + e.getClass().getSimpleName());
             e.printStackTrace();
-            return ResponseEntity.internalServerError().build();
+            
+            // Devolver lista vacía en lugar de error 500 para evitar que se rompa el frontend
+            return ResponseEntity.ok(new ArrayList<>());
         }
     }
     

@@ -42,6 +42,7 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import DashboardLayout from "@/components/barraempresa";
+import QuoteTypeSelector from "@/components/QuoteTypeSelector";
 
 interface CompanyData {
   id?: string;
@@ -247,6 +248,10 @@ const DashboardEmpresas: React.FC = () => {
   const [citiesLoading, setCitiesLoading] = useState(false);
   const [selectedCityId, setSelectedCityId] = useState<number | null>(null);
   const [isSavingCity, setIsSavingCity] = useState(false);
+  
+  // Estados para el selector de tipo de cotización
+  const [showQuoteTypeSelector, setShowQuoteTypeSelector] = useState(false);
+  const [selectedQuoteForModal, setSelectedQuoteForModal] = useState<Quote | null>(null);
   const [showLocationSelector, setShowLocationSelector] = useState(false);
 
   // Estadísticas para las tarjetas
@@ -355,14 +360,84 @@ const DashboardEmpresas: React.FC = () => {
 
       // Obtener la ciudad de la empresa para filtrar solicitudes
       const companyCity = company.ubicacion;
-      console.log("Ciudad de la empresa:", companyCity);
+      console.log("🏢 Ciudad de la empresa:", companyCity);
+      console.log("🏢 Tipo de ubicación:", typeof companyCity);
+      console.log("🏢 Datos completos de empresa:", company);
+
+      // NUEVA LÓGICA: Extraer ciudad de manera más robusta
+      let ciudadParaFiltrar = "";
+      
+      if (typeof companyCity === "string" && companyCity.trim() !== "") {
+        // Si es string directo, usar tal como está
+        ciudadParaFiltrar = companyCity.trim();
+      } else if (companyCity && typeof companyCity === "object") {
+        // Si es objeto, intentar extraer la ciudad de diferentes campos
+        ciudadParaFiltrar = companyCity.ciudad || companyCity.city || companyCity.nombre || 
+                           companyCity.ubicacion || companyCity.location || "";
+      }
+      
+      // Fallback: buscar en otros campos de company
+      if (!ciudadParaFiltrar && company) {
+        const companyAny = company as any;
+        ciudadParaFiltrar = companyAny.ciudad || companyAny.city || companyAny.location || "";
+      }
+      
+      console.log("🎯 Ciudad final para filtrar:", `"${ciudadParaFiltrar}"`);
+      console.log("🎯 Longitud de ciudad:", ciudadParaFiltrar.length);
+
+      // VALIDACIÓN: Solo proceder si tenemos una ciudad válida
+      if (!ciudadParaFiltrar || ciudadParaFiltrar.trim() === "") {
+        console.error("❌ ERROR CRÍTICO: No se pudo determinar la ciudad de la empresa");
+        console.error("📊 Estado de company:", company);
+        console.error("📊 hasLocation:", company.hasLocation);
+        console.error("📊 ubicacion:", company.ubicacion);
+        setRealQuotes([]);
+        setPendingQuotes([]);
+        return;
+      }
 
       // Usar backend para obtener solicitudes pendientes filtradas por ciudad
-      const backendSolicitudes = await solicitudesAPI.getPendingSolicitudesByCity(companyCity);
-      console.log("[loadQuotesFromBackend] Solicitudes pendientes desde backend:", backendSolicitudes.length);
+      console.log("🔍 Enviando request con ciudad:", `"${ciudadParaFiltrar}"`);
+      
+      // MECANISMO DE REINTENTO para manejar intermitencia
+      let backendSolicitudes: SolicitudBackend[] = [];
+      let intentos = 0;
+      const maxIntentos = 3;
+      
+      while (intentos < maxIntentos) {
+        intentos++;
+        console.log(`🔄 Intento ${intentos}/${maxIntentos} para obtener solicitudes de "${ciudadParaFiltrar}"`);
+        
+        try {
+          backendSolicitudes = await solicitudesAPI.getPendingSolicitudesByCity(ciudadParaFiltrar);
+          console.log(`[loadQuotesFromBackend] Intento ${intentos} - Solicitudes encontradas:`, backendSolicitudes.length);
+          
+          // Si encontramos solicitudes o es el último intento, salir del bucle
+          if (backendSolicitudes.length > 0 || intentos >= maxIntentos) {
+            break;
+          }
+          
+          console.log(`⏳ Sin resultados en intento ${intentos}, reintentando en 1 segundo...`);
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+        } catch (error) {
+          console.error(`❌ Error en intento ${intentos}:`, error);
+          if (intentos < maxIntentos) {
+            await new Promise(resolve => setTimeout(resolve, 1500));
+          }
+        }
+      }
+      
+      console.log(`✅ Solicitudes finales obtenidas después de ${intentos} intentos:`, backendSolicitudes.length);
+      
+      // Debug: mostrar las ubicaciones de las solicitudes recibidas
+      backendSolicitudes.forEach((solicitud, index) => {
+        console.log(`📍 Solicitud ${index + 1}: Ubicación = "${solicitud.ubicacion}"`);
+      });
 
       // Mapear las solicitudes del backend al formato esperado por el frontend
       const mappedSolicitudes = backendSolicitudes.map((solicitud: SolicitudBackend) => {
+        console.log(`📞 [DEBUG] Solicitud ${solicitud.id}: telefono = "${solicitud.telefono}"`);
         return {
           id: solicitud.id.toString(),
           title: solicitud.titulo || "Sin título",
@@ -374,6 +449,7 @@ const DashboardEmpresas: React.FC = () => {
           createdAt: solicitud.fechaCreacion,
           userId: solicitud.usuarioId,
           usuarioNombre: solicitud.usuarioNombre || "Usuario",
+          telefono: solicitud.telefono || "", // CAMPO AGREGADO para WhatsApp
           profesion: solicitud.profesion || "general",
           tipo: solicitud.tipo || "herramienta",
           presupuesto: solicitud.presupuesto || 0,
@@ -816,11 +892,19 @@ const DashboardEmpresas: React.FC = () => {
     }
   };
 
-  // Cargar solicitudes cuando el componente se monta
+  // Cargar solicitudes SOLO cuando la empresa tiene ubicación cargada
   useEffect(() => {
+    // Solo proceder si la empresa tiene ubicación y no está vacía
+    if (!company.hasLocation || !company.ubicacion) {
+      console.log("⏳ Esperando ubicación de empresa... Actual:", company.ubicacion);
+      return;
+    }
+    
     console.log("==========================================");
     console.log("INICIANDO CARGA DE SOLICITUDES Y PEDIDOS");
     console.log("==========================================");
+    console.log("🏢 Empresa con ubicación:", company.ubicacion);
+    
     loadQuotesFromBackend();
     
     // Después de cargar las cotizaciones, refrescar pedidos activos con la nueva función
@@ -828,20 +912,26 @@ const DashboardEmpresas: React.FC = () => {
       refreshActiveOrders();
     }, 1500);
     
+  }, [company.hasLocation, company.ubicacion]); // Ejecutar cuando cambie la ubicación de la empresa
+
+  // Efecto separado para las actualizaciones automáticas
+  useEffect(() => {
     // Configurar un listener para actualizar los datos cada cierto tiempo
     const intervalId = setInterval(() => {
-      console.log("Actualizando datos automáticamente...");
-      loadQuotes();
-      
-      // También refrescar pedidos activos periódicamente
-      setTimeout(() => {
-        refreshActiveOrders();
-      }, 1000);
+      if (company.hasLocation && company.ubicacion) {
+        console.log("Actualizando datos automáticamente...");
+        loadQuotes();
+        
+        // También refrescar pedidos activos periódicamente
+        setTimeout(() => {
+          refreshActiveOrders();
+        }, 1000);
+      }
     }, 60000); // Actualizar cada 60 segundos
     
     // Limpiar el intervalo cuando el componente se desmonte
     return () => clearInterval(intervalId);
-  }, []);
+  }, [company.hasLocation, company.ubicacion]);
 
   useEffect(() => {
     const fetchMyQuotes = async () => {
@@ -2243,6 +2333,23 @@ const DashboardEmpresas: React.FC = () => {
     }
   };
 
+  // Funciones para manejar el selector de tipo de cotización
+  const handleQuickQuote = () => {
+    if (selectedQuoteForModal) {
+      navigate(`/backoffice/quick-quote?id=${selectedQuoteForModal.id}`);
+      setShowQuoteTypeSelector(false);
+      setSelectedQuoteForModal(null);
+    }
+  };
+
+  const handleManualQuote = () => {
+    if (selectedQuoteForModal) {
+      navigate(`/backoffice/quote-proposal?id=${selectedQuoteForModal.id}`);
+      setShowQuoteTypeSelector(false);
+      setSelectedQuoteForModal(null);
+    }
+  };
+
   return (
     <DashboardLayout>
       <div className="space-y-4 max-w-7xl mx-auto px-2 py-2 sm:px-4 sm:py-4 bg-gradient-to-b from-blue-50 to-white min-h-screen">
@@ -3241,8 +3348,9 @@ const DashboardEmpresas: React.FC = () => {
                           onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            // Función para crear cotización
-                            navigate(`/backoffice/quote-proposal?id=${quote.id}`);
+                            // Abrir modal selector de tipo de cotización
+                            setSelectedQuoteForModal(quote);
+                            setShowQuoteTypeSelector(true);
                           }}
                           disabled={isProcessing}
                         >
@@ -3292,6 +3400,15 @@ const DashboardEmpresas: React.FC = () => {
       </div>
       
       {/* Se eliminó el modal de publicación manual ya que ahora es automático */}
+      
+      {/* Modal selector de tipo de cotización */}
+      <QuoteTypeSelector
+        open={showQuoteTypeSelector}
+        onOpenChange={setShowQuoteTypeSelector}
+        onSelectQuickQuote={handleQuickQuote}
+        onSelectManualQuote={handleManualQuote}
+        requestTitle={selectedQuoteForModal?.title || selectedQuoteForModal?.description}
+      />
     </DashboardLayout>
   );
 };

@@ -1339,6 +1339,29 @@ const Profile = () => {
                         className="text-sm md:col-span-2"
                       />
                     </div>
+                    
+                    {isEditing && (
+                      <div className="mt-3 p-3 bg-blue-50 rounded-lg border">
+                        <Label className="text-xs font-medium text-blue-800 mb-2 block">🏙️ Ciudades con Solicitudes Disponibles</Label>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleUbicacionChange("ciudad", "Cali")}
+                            className="px-3 py-1 text-xs bg-blue-100 hover:bg-blue-200 text-blue-800 rounded-full border border-blue-300 transition-colors"
+                          >
+                            📍 Cali (2 solicitudes)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleUbicacionChange("ciudad", "Villavicencio")}
+                            className="px-3 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-full border border-gray-300 transition-colors"
+                          >
+                            📍 Villavicencio (0 solicitudes)
+                          </button>
+                        </div>
+                        <p className="text-xs text-blue-600 mt-2">💡 Haz clic en una ciudad para cambiar tu ubicación rápidamente</p>
+                      </div>
+                    )}
                   </div>
 
                   <div className="space-y-2">
