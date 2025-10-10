@@ -1,0 +1,397 @@
+@startuml Ferry77_Diagrama_Clases
+!theme plain
+skinparam linetype ortho
+skinparam ranksep 30
+skinparam nodesep 20
+skinparam classAttributeIconSize 0
+skinparam classFontSize 10
+skinparam packageStyle rectangle
+
+title Ferry77 - Diagrama de Clases\nMarketplace B2B para Construcción
+
+' ================================
+' ENTIDADES PRINCIPALES
+' ================================
+package "👥 USUARIOS" {
+  class Usuario {
+    - id: Long
+    - firebaseUid: String
+    - nombreCompleto: String
+    - email: String
+    - telefono: String
+    - ciudad: String
+    - direccion: String
+    - userType: String
+    - rol: String
+    - verificado: Boolean
+    - fechaRegistro: LocalDateTime
+    - activo: Boolean
+    --
+    + getId(): Long
+    + setNombreCompleto(String): void
+    + isVerificado(): Boolean
+    + getFirebaseUid(): String
+  }
+
+  class Empresa {
+    - id: Long
+    - usuarioId: Long
+    - nombreEmpresa: String
+    - nit: String
+    - logoUrl: String
+    - descripcion: String
+    - categoria: String
+    - calificacion: Float
+    - numeroCalificaciones: Integer
+    - verificada: Boolean
+    - documentosLegales: String
+    --
+    + calcularCalificacion(): Float
+    + isVerificada(): Boolean
+    + actualizarLogo(String): void
+  }
+}
+
+' ================================
+' SOLICITUDES Y COTIZACIONES
+' ================================
+package "📝 SOLICITUDES" {
+  class SolicitudRapida {
+    - id: Long
+    - usuarioId: String
+    - titulo: String
+    - descripcion: String
+    - ciudadOrigen: String
+    - ciudadDestino: String
+    - tipoServicio: String
+    - archivosAdjuntos: String
+    - procesadoPorIA: Boolean
+    - productos: String
+    - fechaCreacion: LocalDateTime
+    - estado: String
+    --
+    + procesarConIA(): void
+    + agregarArchivo(String): void
+    + cambiarEstado(String): void
+  }
+
+  class Propuesta {
+    - id: Long
+    - companyId: Long
+    - solicitudId: Long
+    - total: BigDecimal
+    - currency: String
+    - status: String
+    - createdAt: LocalDateTime
+    - updatedAt: LocalDateTime
+    --
+    + calcularTotal(): BigDecimal
+    + cambiarEstado(String): void
+    + agregarItem(ProposalItem): void
+  }
+
+  class ProposalItem {
+    - id: Long
+    - proposalId: Long
+    - productName: String
+    - quantity: Integer
+    - unitPrice: BigDecimal
+    - totalPrice: BigDecimal
+    - comments: String
+    --
+    + calcularTotalPrice(): BigDecimal
+    + actualizarCantidad(Integer): void
+  }
+
+  class QuickResponse {
+    - id: Long
+    - companyId: Long
+    - companyName: String
+    - solicitudId: Long
+    - responseType: String
+    - message: String
+    - fileName: String
+    - fileType: String
+    - fileUrl: String
+    - fileSize: Long
+    - status: String
+    - createdAt: LocalDateTime
+    - updatedAt: LocalDateTime
+    --
+    + subirArchivo(MultipartFile): String
+    + cambiarEstado(String): void
+    + generarUrlSegura(): String
+  }
+}
+
+' ================================
+' PEDIDOS Y DELIVERY
+' ================================
+package "📦 PEDIDOS" {
+  class Pedido {
+    - id: Long
+    - propuestaId: Long
+    - clienteId: String
+    - empresaId: Long
+    - deliveryId: Long
+    - total: BigDecimal
+    - estado: String
+    - fechaCreacion: LocalDateTime
+    - fechaEntrega: LocalDateTime
+    - direccionEntrega: String
+    - coordenadas: String
+    --
+    + asignarDelivery(Long): void
+    + actualizarEstado(String): void
+    + calcularDistancia(): Float
+  }
+
+  class Delivery {
+    - id: Long
+    - usuarioId: String
+    - vehiculo: String
+    - placa: String
+    - licencia: String
+    - disponible: Boolean
+    - calificacion: Float
+    - ubicacionActual: String
+    --
+    + actualizarUbicacion(String): void
+    + cambiarDisponibilidad(Boolean): void
+    + calcularTarifa(Float): BigDecimal
+  }
+}
+
+' ================================
+' NOTIFICACIONES Y PAGOS
+' ================================
+package "🔔 SISTEMA" {
+  class Notificacion {
+    - id: Long
+    - usuarioId: String
+    - titulo: String
+    - mensaje: String
+    - tipo: String
+    - leida: Boolean
+    - fechaCreacion: LocalDateTime
+    - datos: String
+    --
+    + marcarComoLeida(): void
+    + enviarPush(): void
+    + esUrgente(): Boolean
+  }
+
+  class Pago {
+    - id: Long
+    - pedidoId: Long
+    - monto: BigDecimal
+    - metodoPago: String
+    - estado: String
+    - transactionId: String
+    - fechaPago: LocalDateTime
+    - comision: BigDecimal
+    --
+    + procesarPago(): Boolean
+    + calcularComision(): BigDecimal
+    + generarFactura(): String
+  }
+
+  class Review {
+    - id: Long
+    - empresaId: Long
+    - clienteId: String
+    - pedidoId: Long
+    - calificacion: Integer
+    - comentario: String
+    - fotos: String
+    - fechaCreacion: LocalDateTime
+    - respuesta: String
+    --
+    + validarCalificacion(): Boolean
+    + agregarRespuesta(String): void
+    + subirFotos(List<String>): void
+  }
+}
+
+' ================================
+' CONTROLADORES
+' ================================
+package "🎯 CONTROLLERS" {
+  class UserController {
+    - userService: UserService
+    --
+    + createUser(Usuario): ResponseEntity
+    + getUserByFirebaseId(String): ResponseEntity
+    + updateUser(Long, Usuario): ResponseEntity
+    + deleteUser(Long): ResponseEntity
+  }
+
+  class ProposalController {
+    - proposalService: ProposalService
+    - quickResponseRepository: QuickResponseRepository
+    --
+    + createProposal(ProposalRequest): ResponseEntity
+    + getProposalsByCompany(Long): ResponseEntity
+    + createQuickResponse(QuickResponseDTO): ResponseEntity
+    + getQuickResponsesByCompany(Long): ResponseEntity
+  }
+
+  class OrderController {
+    - orderService: OrderService
+    --
+    + createOrder(OrderRequest): ResponseEntity
+    + updateOrderStatus(Long, String): ResponseEntity
+    + getOrdersByClient(String): ResponseEntity
+    + assignDelivery(Long, Long): ResponseEntity
+  }
+}
+
+' ================================
+' SERVICIOS
+' ================================
+package "📋 SERVICES" {
+  class UserService {
+    - userRepository: UserRepository
+    --
+    + createUser(Usuario): Usuario
+    + findByFirebaseUid(String): Usuario
+    + validateUser(Usuario): Boolean
+    + updateProfile(Usuario): Usuario
+  }
+
+  class ProposalService {
+    - proposalRepository: ProposalRepository
+    - proposalItemRepository: ProposalItemRepository
+    --
+    + createProposal(ProposalRequest): Propuesta
+    + getProposalsByCompany(Long): Page<Propuesta>
+    + calculateTotal(List<ProposalItem>): BigDecimal
+  }
+
+  class NotificationService {
+    - notificationRepository: NotificationRepository
+    - firebaseService: FirebaseService
+    --
+    + sendNotification(String, String): void
+    + sendPushNotification(String, String): void
+    + markAsRead(Long): void
+  }
+
+  class FirebaseService {
+    --
+    + uploadFile(MultipartFile, String): String
+    + deleteFile(String): void
+    + generateSecureUrl(String): String
+  }
+}
+
+' ================================
+' REPOSITORIOS
+' ================================
+package "📊 REPOSITORIES" {
+  interface UserRepository {
+    + findByFirebaseUid(String): Usuario
+    + findByEmail(String): Usuario
+    + findByUserType(String): List<Usuario>
+  }
+
+  interface ProposalRepository {
+    + findByCompanyId(Long): List<Propuesta>
+    + findBySolicitudId(Long): List<Propuesta>
+    + findByStatus(String): List<Propuesta>
+  }
+
+  interface QuickResponseRepository {
+    + findBySolicitudId(Long): List<QuickResponse>
+    + findByCompanyId(Long): Page<QuickResponse>
+    + findByCompanyIdAndStatus(Long, String): List<QuickResponse>
+  }
+}
+
+' ================================
+' DTOs
+' ================================
+package "📄 DTOs" {
+  class ProposalRequest {
+    - solicitudId: Long
+    - companyId: Long
+    - items: List<ProposalItemRequest>
+    - comments: String
+  }
+
+  class QuickResponseDTO {
+    - companyId: Long
+    - companyName: String
+    - solicitudId: Long
+    - responseType: String
+    - message: String
+    - fileUrl: String
+    - fileName: String
+    - fileType: String
+    - fileSize: Long
+  }
+
+  class OrderRequest {
+    - propuestaId: Long
+    - direccionEntrega: String
+    - metodoPago: String
+    - notas: String
+  }
+}
+
+' ================================
+' RELACIONES
+' ================================
+
+' Usuario - Empresa
+Usuario ||--o{ Empresa : "tiene"
+
+' Usuario - Solicitudes
+Usuario ||--o{ SolicitudRapida : "crea"
+
+' Empresa - Propuestas  
+Empresa ||--o{ Propuesta : "genera"
+Empresa ||--o{ QuickResponse : "responde"
+
+' Solicitud - Propuestas
+SolicitudRapida ||--o{ Propuesta : "recibe"
+SolicitudRapida ||--o{ QuickResponse : "recibe"
+
+' Propuesta - Items
+Propuesta ||--o{ ProposalItem : "contiene"
+
+' Propuesta - Pedido
+Propuesta ||--|| Pedido : "genera"
+
+' Usuario - Delivery
+Usuario ||--o| Delivery : "es"
+
+' Pedido - Delivery
+Delivery ||--o{ Pedido : "entrega"
+
+' Pedido - Pago
+Pedido ||--|| Pago : "requiere"
+
+' Empresa - Review
+Empresa ||--o{ Review : "recibe"
+
+' Controllers - Services
+UserController --> UserService
+ProposalController --> ProposalService
+OrderController --> OrderService
+
+' Services - Repositories
+UserService --> UserRepository
+ProposalService --> ProposalRepository
+NotificationService --> NotificationRepository
+
+' Services - Services
+ProposalService --> NotificationService
+UserService --> FirebaseService
+
+' Controllers - DTOs
+ProposalController --> ProposalRequest
+ProposalController --> QuickResponseDTO
+OrderController --> OrderRequest
+
+@enduml

@@ -126,7 +126,7 @@ const Landing = () => {
 
   const checkBackendConnection = async () => {
     try {
-      const response = await fetch('http://localhost:8080/api/v1/mock/health');
+      const response = await fetch('http://localhost:8090/api/v1/mock/health');
       if (response.ok) {
         setBackendConnected(true);
         console.log('✅ Backend connected successfully!');
@@ -146,7 +146,7 @@ const Landing = () => {
     
     setIsLoadingQuotes(true);
     try {
-      const response = await fetch(`http://localhost:8080/api/v1/mock/quotes?searchTerm=${encodeURIComponent(searchTerm)}`);
+      const response = await fetch(`http://localhost:8090/api/v1/mock/quotes?searchTerm=${encodeURIComponent(searchTerm)}`);
       const data = await response.json();
       setQuotes(data);
     } catch (error) {

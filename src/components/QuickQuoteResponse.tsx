@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "@/hooks/use-toast";
 import { getAuth } from "firebase/auth";
 import DashboardLayout from "@/components/barraempresa";
+import { uploadCompanyResponseImage, uploadCompanyResponseExcel } from "@/lib/companyResponseUpload";
 
 interface QuickQuoteRequest {
   id: string;
@@ -44,6 +45,8 @@ const QuickQuoteResponse: React.FC = () => {
   const [message, setMessage] = useState('');
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<number>(0);
+  const [isUploading, setIsUploading] = useState(false);
 
   // Refs para inputs de archivos
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -237,23 +240,65 @@ const QuickQuoteResponse: React.FC = () => {
         throw new Error("No se pudo obtener la información de la empresa");
       }
 
-      // Preparar FormData para envío
-      const formData = new FormData();
-      formData.append('companyId', companyData.id.toString());
-      formData.append('solicitudId', request.id);
-      formData.append('responseType', responseType);
-      formData.append('companyName', companyData?.companyName || companyData?.nick || companyData?.nombreCompleto || "Empresa");
+      let fileUrl = null;
 
-      if (responseType === 'message') {
-        formData.append('message', message);
-      } else if (uploadedFile) {
-        formData.append('file', uploadedFile);
+      // Si hay archivo, subirlo a Firebase Storage primero
+      if (uploadedFile && (responseType === 'image' || responseType === 'excel')) {
+        setIsUploading(true);
+        
+        try {
+          let uploadResult;
+          
+          if (responseType === 'image') {
+            console.log('[Company Response] Subiendo imagen a Firebase Storage...');
+            uploadResult = await uploadCompanyResponseImage(
+              uploadedFile,
+              request.id,
+              (progress) => setUploadProgress(progress)
+            );
+          } else if (responseType === 'excel') {
+            console.log('[Company Response] Subiendo archivo Excel a Firebase Storage...');
+            uploadResult = await uploadCompanyResponseExcel(
+              uploadedFile,
+              request.id,
+              (progress) => setUploadProgress(progress)
+            );
+          }
+
+          fileUrl = uploadResult?.url;
+          console.log('[Company Response] Archivo subido exitosamente:', fileUrl);
+          
+        } catch (uploadError) {
+          console.error('[Company Response] Error subiendo archivo a Firebase:', uploadError);
+          throw new Error('Error al subir el archivo. Por favor intenta de nuevo.');
+        } finally {
+          setIsUploading(false);
+          setUploadProgress(0);
+        }
       }
 
-      // Enviar al backend
+      // Preparar datos para envío al backend (solo metadatos + URL de Firebase)
+      const responseData = {
+        companyId: companyData.id,
+        solicitudId: request.id,
+        responseType: responseType,
+        companyName: companyData?.companyName || companyData?.nick || companyData?.nombreCompleto || "Empresa",
+        message: responseType === 'message' ? message : null,
+        fileName: uploadedFile ? uploadedFile.name : null,
+        fileType: uploadedFile ? uploadedFile.type : null,
+        fileUrl: fileUrl, // URL de Firebase Storage
+        fileSize: uploadedFile ? uploadedFile.size : null
+      };
+
+      console.log('[Company Response] Enviando respuesta al backend:', responseData);
+
+      // Enviar al backend usando JSON (no FormData)
       const response = await fetch('http://localhost:8090/api/proposals/quick-response', {
         method: 'POST',
-        body: formData
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(responseData)
       });
 
       if (!response.ok) {
@@ -272,11 +317,13 @@ const QuickQuoteResponse: React.FC = () => {
       console.error('Error enviando respuesta rápida:', error);
       toast({
         title: "Error",
-        description: "No se pudo enviar la respuesta. Por favor intenta de nuevo.",
+        description: error instanceof Error ? error.message : "No se pudo enviar la respuesta. Por favor intenta de nuevo.",
         variant: "destructive",
       });
     } finally {
       setSending(false);
+      setIsUploading(false);
+      setUploadProgress(0);
     }
   };
 
@@ -593,9 +640,25 @@ const QuickQuoteResponse: React.FC = () => {
 
               {/* Botón de envío */}
               <div className="border-t pt-4">
+                {/* Mostrar progreso de subida si está subiendo */}
+                {isUploading && (
+                  <div className="mb-4">
+                    <div className="flex justify-between text-sm text-gray-600 mb-2">
+                      <span>Subiendo archivo a Firebase Storage...</span>
+                      <span>{Math.round(uploadProgress)}%</span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-2">
+                      <div 
+                        className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
+                        style={{ width: `${uploadProgress}%` }}
+                      ></div>
+                    </div>
+                  </div>
+                )}
+                
                 <Button
                   onClick={handleSubmit}
-                  disabled={sending || !responseType || 
+                  disabled={sending || isUploading || !responseType || 
                     (responseType === 'message' && !message.trim()) || 
                     ((responseType === 'image' || responseType === 'excel') && !uploadedFile)
                   }
@@ -604,7 +667,7 @@ const QuickQuoteResponse: React.FC = () => {
                   {sending ? (
                     <div className="flex items-center">
                       <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                      Enviando...
+                      {isUploading ? 'Subiendo archivo...' : 'Enviando...'}
                     </div>
                   ) : (
                     <>

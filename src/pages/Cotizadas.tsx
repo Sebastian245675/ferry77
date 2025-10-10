@@ -16,7 +16,11 @@ import {
   Calendar,
   CheckCircle,
   AlertCircle,
-  Package
+  Package,
+  Image,
+  FileText,
+  MessageSquare,
+  Download
 } from "lucide-react";
 
 type ProposalItem = {
@@ -46,9 +50,36 @@ type Proposal = {
   };
 };
 
+type QuickResponse = {
+  id: number;
+  companyId: number;
+  companyName: string;
+  solicitudId: number;
+  responseType: string; // 'message', 'image', 'excel'
+  message?: string;
+  fileName?: string;
+  fileType?: string;
+  fileUrl?: string;
+  fileSize?: number;
+  status: string;
+  createdAt: string;
+  updatedAt?: string;
+  // Datos de la solicitud
+  solicitud?: {
+    titulo: string;
+    ubicacion: string;
+    clientName: string;
+    clientCity: string;
+  };
+};
+
+type CombinedProposal = (Proposal | QuickResponse) & {
+  type: 'traditional' | 'quick';
+};
+
 const Cotizadas = () => {
   const navigate = useNavigate();
-  const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [proposals, setProposals] = useState<CombinedProposal[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
@@ -91,67 +122,157 @@ const Cotizadas = () => {
   const fetchProposals = async (companyId: number) => {
     try {
       console.log("🔍 Obteniendo propuestas para empresa ID:", companyId);
+      console.log("📡 URL propuestas tradicionales:", `http://localhost:8090/api/proposals/company/${companyId}?page=0&size=20`);
+      console.log("📡 URL respuestas rápidas:", `http://localhost:8090/api/proposals/quick-responses/company/${companyId}?page=0&size=20`);
       
-      const response = await fetch(`http://localhost:8090/api/proposals/company/${companyId}?page=0&size=20`);
+      // Cargar propuestas tradicionales
+      const proposalsResponse = await fetch(`http://localhost:8090/api/proposals/company/${companyId}?page=0&size=20`);
+      console.log("📊 Response status propuestas:", proposalsResponse.status);
       
-      if (response.ok) {
-        const data = await response.json();
-        console.log("📦 Propuestas obtenidas:", data);
+      // Cargar respuestas rápidas  
+      const quickResponsesResponse = await fetch(`http://localhost:8090/api/proposals/quick-responses/company/${companyId}?page=0&size=20`);
+      console.log("📱 Response status respuestas rápidas:", quickResponsesResponse.status);
+      
+      let allProposals: CombinedProposal[] = [];
+      
+      // Procesar propuestas tradicionales
+      if (proposalsResponse.ok) {
+        const proposalsData = await proposalsResponse.json();
+        console.log("📦 Propuestas tradicionales obtenidas:", proposalsData);
+        console.log("📦 Número de propuestas tradicionales:", proposalsData.length || (proposalsData.content && proposalsData.content.length) || 0);
         
-        // Si la respuesta es paginada
-        const proposalsList = data.content || data;
+        const proposalsList = proposalsData.content || proposalsData;
         
-        // Enriquecer cada propuesta con datos de la solicitud
         const enrichedProposals = await Promise.all(
           proposalsList.map(async (proposal: Proposal) => {
-            try {
-              const solicitudResponse = await fetch(`http://localhost:8090/api/solicitudes/${proposal.solicitudId}`);
-              if (solicitudResponse.ok) {
-                const solicitudData = await solicitudResponse.json();
-                
-                // Obtener datos del cliente
-                let clientName = "Cliente Anónimo";
-                let clientCity = solicitudData.ciudadOrigen || "Sin ciudad";
-                
-                if (solicitudData.usuarioId) {
-                  try {
-                    const clientResponse = await fetch(`http://localhost:8090/api/usuarios/firebase/${solicitudData.usuarioId}`);
-                    if (clientResponse.ok) {
-                      const clientData = await clientResponse.json();
-                      clientName = clientData.nombreCompleto || "Cliente Anónimo";
-                      clientCity = clientData.ciudad || solicitudData.ciudadOrigen || "Sin ciudad";
-                    }
-                  } catch (error) {
-                    console.warn("⚠️ No se pudo obtener datos del cliente:", error);
-                  }
-                }
-                
-                return {
-                  ...proposal,
-                  solicitud: {
-                    titulo: solicitudData.titulo || "Sin título",
-                    ubicacion: solicitudData.ciudadOrigen || "Sin ubicación",
-                    clientName,
-                    clientCity
-                  }
-                };
-              }
-              return proposal;
-            } catch (error) {
-              console.warn("⚠️ Error obteniendo datos de solicitud:", error);
-              return proposal;
-            }
+            const enrichedProposal = await enrichProposalWithSolicitud(proposal);
+            return {
+              ...enrichedProposal,
+              type: 'traditional' as const
+            };
           })
         );
         
-        setProposals(enrichedProposals);
+        console.log("✅ Propuestas tradicionales procesadas:", enrichedProposals.length);
+        allProposals = [...allProposals, ...enrichedProposals];
       } else {
-        console.error("❌ Error al obtener propuestas");
+        console.error("❌ Error al obtener propuestas tradicionales:", proposalsResponse.status, await proposalsResponse.text());
       }
+      
+      // Procesar respuestas rápidas
+      if (quickResponsesResponse.ok) {
+        const quickResponsesData = await quickResponsesResponse.json();
+        console.log("📱 Respuestas rápidas obtenidas:", quickResponsesData);
+        console.log("📱 Número de respuestas rápidas:", quickResponsesData.length || (quickResponsesData.content && quickResponsesData.content.length) || 0);
+        
+        const quickResponsesList = quickResponsesData.content || quickResponsesData;
+        
+        const enrichedQuickResponses = await Promise.all(
+          quickResponsesList.map(async (quickResponse: QuickResponse) => {
+            const enrichedResponse = await enrichQuickResponseWithSolicitud(quickResponse);
+            return {
+              ...enrichedResponse,
+              type: 'quick' as const
+            };
+          })
+        );
+        
+        console.log("✅ Respuestas rápidas procesadas:", enrichedQuickResponses.length);
+        allProposals = [...allProposals, ...enrichedQuickResponses];
+      } else {
+        console.error("❌ Error al obtener respuestas rápidas:", quickResponsesResponse.status, await quickResponsesResponse.text());
+      }
+      
+      // Ordenar por fecha de creación (más recientes primero)
+      allProposals.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      
+      console.log("🎯 Total de propuestas combinadas:", allProposals.length);
+      console.log("📊 Propuestas finales:", allProposals);
+      
+      setProposals(allProposals);
+      
     } catch (error) {
       console.error("❌ Error al cargar propuestas:", error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const enrichProposalWithSolicitud = async (proposal: Proposal) => {
+    try {
+      const solicitudResponse = await fetch(`http://localhost:8090/api/solicitudes/${proposal.solicitudId}`);
+      if (solicitudResponse.ok) {
+        const solicitudData = await solicitudResponse.json();
+        
+        let clientName = "Cliente Anónimo";
+        let clientCity = solicitudData.ciudadOrigen || "Sin ciudad";
+        
+        if (solicitudData.usuarioId) {
+          try {
+            const clientResponse = await fetch(`http://localhost:8090/api/usuarios/firebase/${solicitudData.usuarioId}`);
+            if (clientResponse.ok) {
+              const clientData = await clientResponse.json();
+              clientName = clientData.nombreCompleto || "Cliente Anónimo";
+              clientCity = clientData.ciudad || solicitudData.ciudadOrigen || "Sin ciudad";
+            }
+          } catch (error) {
+            console.warn("⚠️ No se pudo obtener datos del cliente:", error);
+          }
+        }
+        
+        return {
+          ...proposal,
+          solicitud: {
+            titulo: solicitudData.titulo || "Sin título",
+            ubicacion: solicitudData.ciudadOrigen || "Sin ubicación",
+            clientName,
+            clientCity
+          }
+        };
+      }
+      return proposal;
+    } catch (error) {
+      console.warn("⚠️ Error obteniendo datos de solicitud:", error);
+      return proposal;
+    }
+  };
+
+  const enrichQuickResponseWithSolicitud = async (quickResponse: QuickResponse) => {
+    try {
+      const solicitudResponse = await fetch(`http://localhost:8090/api/solicitudes/${quickResponse.solicitudId}`);
+      if (solicitudResponse.ok) {
+        const solicitudData = await solicitudResponse.json();
+        
+        let clientName = "Cliente Anónimo";
+        let clientCity = solicitudData.ciudadOrigen || "Sin ciudad";
+        
+        if (solicitudData.usuarioId) {
+          try {
+            const clientResponse = await fetch(`http://localhost:8090/api/usuarios/firebase/${solicitudData.usuarioId}`);
+            if (clientResponse.ok) {
+              const clientData = await clientResponse.json();
+              clientName = clientData.nombreCompleto || "Cliente Anónimo";
+              clientCity = clientData.ciudad || solicitudData.ciudadOrigen || "Sin ciudad";
+            }
+          } catch (error) {
+            console.warn("⚠️ No se pudo obtener datos del cliente:", error);
+          }
+        }
+        
+        return {
+          ...quickResponse,
+          solicitud: {
+            titulo: solicitudData.titulo || "Sin título",
+            ubicacion: solicitudData.ciudadOrigen || "Sin ubicación",
+            clientName,
+            clientCity
+          }
+        };
+      }
+      return quickResponse;
+    } catch (error) {
+      console.warn("⚠️ Error obteniendo datos de solicitud:", error);
+      return quickResponse;
     }
   };
 
@@ -237,7 +358,13 @@ const Cotizadas = () => {
           
           <div className="flex items-center gap-2">
             <Badge variant="outline" className="bg-blue-50 text-blue-700">
-              {proposals.length} propuesta{proposals.length !== 1 ? 's' : ''}
+              {proposals.length} respuesta{proposals.length !== 1 ? 's' : ''}
+            </Badge>
+            <Badge variant="outline" className="bg-purple-50 text-purple-700">
+              {proposals.filter(p => p.type === 'traditional').length} detallada{proposals.filter(p => p.type === 'traditional').length !== 1 ? 's' : ''}
+            </Badge>
+            <Badge variant="outline" className="bg-green-50 text-green-700">
+              {proposals.filter(p => p.type === 'quick').length} rápida{proposals.filter(p => p.type === 'quick').length !== 1 ? 's' : ''}
             </Badge>
           </div>
         </div>
@@ -273,12 +400,12 @@ const Cotizadas = () => {
             <CardContent className="p-12 text-center">
               <Package className="h-12 w-12 text-gray-400 mx-auto mb-4" />
               <h3 className="text-lg font-medium text-gray-900 mb-2">
-                {searchTerm || filterStatus !== "all" ? "No se encontraron propuestas" : "No has enviado propuestas aún"}
+                {searchTerm || filterStatus !== "all" ? "No se encontraron respuestas" : "No has enviado respuestas aún"}
               </h3>
               <p className="text-gray-600 mb-4">
                 {searchTerm || filterStatus !== "all" 
                   ? "Intenta ajustar los filtros de búsqueda"
-                  : "Cuando envíes cotizaciones, aparecerán aquí"
+                  : "Cuando envíes cotizaciones o respuestas rápidas, aparecerán aquí"
                 }
               </p>
               {(!searchTerm && filterStatus === "all") && (
@@ -295,9 +422,18 @@ const Cotizadas = () => {
                 <CardHeader className="pb-4">
                   <div className="flex justify-between items-start">
                     <div className="flex-1">
-                      <CardTitle className="text-lg mb-2">
-                        {proposal.solicitud?.titulo || `Propuesta #${proposal.id}`}
-                      </CardTitle>
+                      <div className="flex items-center gap-2 mb-2">
+                        <CardTitle className="text-lg">
+                          {proposal.solicitud?.titulo || `${proposal.type === 'quick' ? 'Respuesta Rápida' : 'Propuesta'} #${proposal.id}`}
+                        </CardTitle>
+                        <Badge variant="outline" className={
+                          proposal.type === 'quick' 
+                            ? "bg-blue-50 text-blue-700 border-blue-200" 
+                            : "bg-purple-50 text-purple-700 border-purple-200"
+                        }>
+                          {proposal.type === 'quick' ? '⚡ Rápida' : '📋 Detallada'}
+                        </Badge>
+                      </div>
                       <div className="flex flex-wrap items-center gap-4 text-sm text-gray-600">
                         <div className="flex items-center gap-1">
                           <Users className="h-4 w-4" />
@@ -330,54 +466,137 @@ const Cotizadas = () => {
                 
                 <CardContent className="pt-0">
                   <div className="space-y-4">
-                    {/* Resumen de ítems */}
-                    <div className="bg-gray-50 rounded-lg p-3">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Package className="h-4 w-4 text-gray-600" />
-                        <span className="font-medium text-sm">Ítems cotizados:</span>
-                      </div>
-                      <div className="space-y-1">
-                        {proposal.items.slice(0, 2).map((item, index) => (
-                          <div key={index} className="flex justify-between text-sm">
-                            <span className="text-gray-600">
-                              {item.quantity}x {item.productName}
-                            </span>
-                            <span className="font-medium">
-                              {formatPrice(item.totalPrice)}
-                            </span>
+                    {proposal.type === 'traditional' ? (
+                      // Renderizado para propuestas tradicionales
+                      <>
+                        {/* Resumen de ítems */}
+                        <div className="bg-gray-50 rounded-lg p-3">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Package className="h-4 w-4 text-gray-600" />
+                            <span className="font-medium text-sm">Ítems cotizados:</span>
                           </div>
-                        ))}
-                        {proposal.items.length > 2 && (
-                          <div className="text-xs text-gray-500 pt-1">
-                            +{proposal.items.length - 2} ítem{proposal.items.length - 2 !== 1 ? 's' : ''} más
+                          <div className="space-y-1">
+                            {(proposal as Proposal & { type: 'traditional' }).items.slice(0, 2).map((item, index) => (
+                              <div key={index} className="flex justify-between text-sm">
+                                <span className="text-gray-600">
+                                  {item.quantity}x {item.productName}
+                                </span>
+                                <span className="font-medium">
+                                  {formatPrice(item.totalPrice)}
+                                </span>
+                              </div>
+                            ))}
+                            {(proposal as Proposal & { type: 'traditional' }).items.length > 2 && (
+                              <div className="text-xs text-gray-500 pt-1">
+                                +{(proposal as Proposal & { type: 'traditional' }).items.length - 2} ítem{(proposal as Proposal & { type: 'traditional' }).items.length - 2 !== 1 ? 's' : ''} más
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
-                    </div>
+                        </div>
 
-                    {/* Total y acciones */}
-                    <div className="flex justify-between items-center">
-                      <div>
-                        <p className="text-sm text-gray-600 mb-1">
-                          Total de la propuesta
-                        </p>
-                        <p className="text-2xl font-bold text-primary">
-                          {formatPrice(proposal.total)}
-                        </p>
-                        <p className="text-xs text-gray-500">
-                          {proposal.items.length} ítem{proposal.items.length !== 1 ? 's' : ''} • {proposal.currency}
-                        </p>
-                      </div>
-                      
-                      <Button
-                        variant="outline"
-                        onClick={() => navigate(`/backoffice/proposal-detail?id=${proposal.id}`)}
-                        className="bg-white hover:bg-blue-50 border-blue-200"
-                      >
-                        <Eye className="h-4 w-4 mr-2" />
-                        Ver Detalles
-                      </Button>
-                    </div>
+                        {/* Total y acciones */}
+                        <div className="flex justify-between items-center">
+                          <div>
+                            <p className="text-sm text-gray-600 mb-1">
+                              Total de la propuesta
+                            </p>
+                            <p className="text-2xl font-bold text-primary">
+                              {formatPrice((proposal as Proposal & { type: 'traditional' }).total)}
+                            </p>
+                            <p className="text-xs text-gray-500">
+                              {(proposal as Proposal & { type: 'traditional' }).items.length} ítem{(proposal as Proposal & { type: 'traditional' }).items.length !== 1 ? 's' : ''} • {(proposal as Proposal & { type: 'traditional' }).currency}
+                            </p>
+                          </div>
+                          
+                          <Button
+                            variant="outline"
+                            onClick={() => navigate(`/backoffice/proposal-detail?id=${proposal.id}`)}
+                            className="bg-white hover:bg-blue-50 border-blue-200"
+                          >
+                            <Eye className="h-4 w-4 mr-2" />
+                            Ver Detalles
+                          </Button>
+                        </div>
+                      </>
+                    ) : (
+                      // Renderizado para respuestas rápidas
+                      <>
+                        {/* Contenido de respuesta rápida */}
+                        <div className="bg-blue-50 rounded-lg p-3 border-l-4 border-blue-400">
+                          <div className="flex items-center gap-2 mb-2">
+                            <div className="flex items-center gap-2">
+                              {(proposal as QuickResponse & { type: 'quick' }).responseType === 'image' && <Image className="h-4 w-4 text-blue-600" />}
+                              {(proposal as QuickResponse & { type: 'quick' }).responseType === 'excel' && <FileText className="h-4 w-4 text-green-600" />}
+                              {(proposal as QuickResponse & { type: 'quick' }).responseType === 'message' && <MessageSquare className="h-4 w-4 text-gray-600" />}
+                              <span className="font-medium text-sm text-blue-800">
+                                Respuesta Rápida - {(proposal as QuickResponse & { type: 'quick' }).responseType === 'image' ? 'Imagen' : (proposal as QuickResponse & { type: 'quick' }).responseType === 'excel' ? 'Archivo Excel' : 'Mensaje'}
+                              </span>
+                            </div>
+                          </div>
+                          
+                          {/* Contenido según el tipo */}
+                          {(proposal as QuickResponse & { type: 'quick' }).responseType === 'message' && (proposal as QuickResponse & { type: 'quick' }).message && (
+                            <div className="text-sm text-gray-700 bg-white p-3 rounded border">
+                              {(proposal as QuickResponse & { type: 'quick' }).message}
+                            </div>
+                          )}
+                          
+                          {(proposal as QuickResponse & { type: 'quick' }).responseType === 'image' && (proposal as QuickResponse & { type: 'quick' }).fileUrl && (
+                            <div className="space-y-2">
+                              <img 
+                                src={(proposal as QuickResponse & { type: 'quick' }).fileUrl} 
+                                alt="Respuesta de la empresa"
+                                className="max-w-full h-auto rounded border shadow-sm cursor-pointer hover:shadow-md transition-shadow"
+                                onClick={() => window.open((proposal as QuickResponse & { type: 'quick' }).fileUrl, '_blank')}
+                              />
+                              <p className="text-xs text-gray-500">
+                                {(proposal as QuickResponse & { type: 'quick' }).fileName} • 
+                                {(proposal as QuickResponse & { type: 'quick' }).fileSize && ` ${Math.round((proposal as QuickResponse & { type: 'quick' }).fileSize! / 1024)} KB`}
+                              </p>
+                            </div>
+                          )}
+                          
+                          {(proposal as QuickResponse & { type: 'quick' }).responseType === 'excel' && (proposal as QuickResponse & { type: 'quick' }).fileUrl && (
+                            <div className="flex items-center gap-3 bg-white p-3 rounded border">
+                              <FileText className="h-8 w-8 text-green-600" />
+                              <div className="flex-1">
+                                <p className="font-medium text-sm">{(proposal as QuickResponse & { type: 'quick' }).fileName}</p>
+                                <p className="text-xs text-gray-500">
+                                  {(proposal as QuickResponse & { type: 'quick' }).fileSize && `${Math.round((proposal as QuickResponse & { type: 'quick' }).fileSize! / 1024)} KB`} • 
+                                  {(proposal as QuickResponse & { type: 'quick' }).fileType}
+                                </p>
+                              </div>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => window.open((proposal as QuickResponse & { type: 'quick' }).fileUrl, '_blank')}
+                              >
+                                <Download className="h-4 w-4 mr-1" />
+                                Descargar
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Acciones para respuesta rápida */}
+                        <div className="flex justify-between items-center">
+                          <div>
+                            <p className="text-sm text-gray-600">
+                              Respuesta enviada el {formatDate((proposal as QuickResponse & { type: 'quick' }).createdAt)}
+                            </p>
+                          </div>
+                          
+                          <Button
+                            variant="outline"
+                            onClick={() => navigate(`/backoffice/quick-response-detail?id=${proposal.id}`)}
+                            className="bg-white hover:bg-blue-50 border-blue-200"
+                          >
+                            <Eye className="h-4 w-4 mr-2" />
+                            Ver Conversación
+                          </Button>
+                        </div>
+                      </>
+                    )}
                   </div>
                 </CardContent>
               </Card>

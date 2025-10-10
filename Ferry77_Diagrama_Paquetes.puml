@@ -1,0 +1,112 @@
+@startuml Ferry77_Arquitectura_Paquetes
+!theme plain
+skinparam packageStyle rectangle
+skinparam linetype ortho
+skinparam ranksep 20
+skinparam nodesep 15
+skinparam wrapWidth 150
+skinparam maxMessageSize 80
+
+title Ferry77 - Arquitectura de Paquetes\nMarketplace B2B para Construcción
+
+' ================================
+' FRONTEND - REACT
+' ================================
+package "🎨 FRONTEND" as Frontend #lightblue {
+  [📱 Pages]
+  [🧩 Components] 
+  [🔧 Services]
+  [📊 State Management]
+}
+
+' ================================
+' BACKEND - SPRING BOOT
+' ================================
+package "🚀 BACKEND" as Backend #lightyellow {
+  [🎯 Controllers]
+  [📋 Business Services]
+  [🔒 Security]
+  [📡 WebSocket]
+}
+
+' ================================
+' DATOS
+' ================================
+package "🗄️ DATOS" as DataLayer #lightcoral {
+  [📊 Repositories]
+  [🏗️ Entities]
+  [🗃️ MySQL DB]
+}
+
+' ================================
+' SERVICIOS EXTERNOS
+' ================================
+package "⚡ EXTERNOS" as ExternalServices #lightgreen {
+  [🔥 Firebase]
+  [🤖 IA Services]
+  [💳 Payments]
+  [🗺️ Maps]
+}
+
+' ================================
+' MÓDULOS NEGOCIO
+' ================================
+package "💼 NEGOCIO" as BusinessModules #lavender {
+  [📝 Solicitudes]
+  [� Cotizaciones]
+  [� Pedidos]
+  [⭐ Reviews]
+}
+
+' ================================
+' RELACIONES SIMPLIFICADAS
+' ================================
+
+' Frontend -> Backend
+Frontend --> Backend : "API REST"
+
+' Backend -> Datos
+Backend --> DataLayer : "JPA/Hibernate"
+
+' Backend -> Servicios Externos
+Backend --> ExternalServices : "Integración"
+
+' Backend -> Módulos Negocio
+Backend --> BusinessModules : "Lógica"
+
+' Módulos Negocio -> Servicios Externos
+BusinessModules --> ExternalServices : "Consume"
+
+' ================================
+' NOTAS COMPACTAS
+' ================================
+note top of Frontend
+  **React + TypeScript**
+  Vite, Tailwind, Redux
+  Components, Pages, Services
+end note
+
+note top of Backend
+  **Spring Boot + Java**
+  REST APIs, WebSocket
+  Security, Controllers
+end note
+
+note right of DataLayer
+  **MySQL + JPA**
+  Repositories, Entities
+  Connection Pool
+end note
+
+note bottom of ExternalServices
+  **Servicios Clave**
+  Firebase, IA, Pagos, Maps
+end note
+
+note left of BusinessModules
+  **Lógica Core**
+  Solicitudes IA, Cotizaciones
+  Pedidos, Reviews
+end note
+
+@enduml

@@ -1,0 +1,182 @@
+@startuml Ferry77_Marketplace_B2B_Construccion
+!theme plain
+skinparam linetype ortho
+skinparam ranksep 30
+skinparam nodesep 20
+skinparam packageStyle rectangle
+skinparam wrapWidth 200
+skinparam maxMessageSize 100
+
+title Ferry77 - Marketplace B2B para Construcción\nSistema Completo de Casos de Uso
+
+' ================================
+' ACTORES PRINCIPALES
+' ================================
+actor "🏗️ Constructor" as Constructor #lightblue
+actor "🏢 Empresa" as Empresa #lightgreen  
+actor "⚙️ Admin" as Admin #lightcoral
+
+' ================================
+' MÓDULO 1: SOLICITUDES & COTIZACIONES
+' ================================
+package "📝 SOLICITUDES & COTIZACIONES" #aliceblue {
+  
+  usecase "Crear Solicitud Rápida (IA)" as UC_SR1
+  usecase "Crear Solicitud Manual" as UC_SR2
+  usecase "Subir Archivos Firebase" as UC_SR3
+  usecase "Ver Mis Solicitudes" as UC_SG1
+  usecase "Gestionar Solicitudes" as UC_SG2
+  
+  usecase "Ver Oportunidades" as UC_CE1
+  usecase "Cotización Detallada" as UC_CE2
+  usecase "Respuesta Rápida" as UC_CE3
+  usecase "Ver Cotizaciones" as UC_CC1
+  usecase "Comparar Ofertas" as UC_CC2
+  usecase "Aceptar/Rechazar" as UC_CC3
+}
+
+' ================================
+' MÓDULO 2: PEDIDOS & DELIVERY
+' ================================
+package "📦 PEDIDOS & DELIVERY" #lightyellow {
+  
+  usecase "Confirmar Pedido" as UC_P1
+  usecase "Tracking Tiempo Real" as UC_P2
+  usecase "Asignar Delivery" as UC_P3
+  usecase "Gestionar Estados" as UC_P4
+  
+  usecase "Ver Entregas Disponibles" as UC_D1
+  usecase "Aceptar Entrega" as UC_D2
+  usecase "GPS & Rutas" as UC_D3
+  usecase "Completar Entrega" as UC_D4
+}
+
+' ================================
+' MÓDULO 3: USUARIOS & PERFILES
+' ================================
+package "👥 USUARIOS & PERFILES" #lavender {
+  
+  usecase "Registro Multi-rol" as UC_A1
+  usecase "Login Firebase" as UC_A2
+  usecase "Gestionar Perfil" as UC_A3
+  usecase "Verificación Empresa" as UC_A4
+  usecase "Recuperar Contraseña" as UC_A5
+}
+
+' ================================
+' MÓDULO 4: NOTIFICACIONES & PAGOS
+' ================================
+package "🔔 NOTIFICACIONES & PAGOS" #mistyrose {
+  
+  usecase "WebSocket Real-time" as UC_N1
+  usecase "Push Notifications" as UC_N2
+  usecase "Centro Notificaciones" as UC_N3
+  
+  usecase "Procesar Pagos" as UC_PAG1
+  usecase "Historial Pagos" as UC_PAG2
+  usecase "Facturación" as UC_PAG3
+}
+
+' ================================
+' MÓDULO 5: REVIEWS & INVENTARIO
+' ================================
+package "⭐ REVIEWS & INVENTARIO" #honeydew {
+  
+  usecase "Calificar Servicio" as UC_R1
+  usecase "Escribir Reseñas" as UC_R2
+  usecase "Gestionar Reviews" as UC_R3
+  
+  usecase "Gestionar Productos" as UC_I1
+  usecase "Actualizar Stock" as UC_I2
+  usecase "Reportes Inventario" as UC_I3
+}
+
+' ================================
+' MÓDULO 6: ADMINISTRACIÓN
+' ================================
+package "⚙️ ADMINISTRACIÓN" #lightsalmon {
+  
+  usecase "Verificar Empresas" as UC_AU1
+  usecase "Moderar Usuarios" as UC_AU2
+  usecase "Dashboard Ejecutivo" as UC_AU3
+  usecase "Métricas Sistema" as UC_AU4
+  usecase "Gestionar Ciudades" as UC_AU5
+  usecase "Backup Sistema" as UC_AU6
+}
+
+' ================================
+' RELACIONES DE ACTORES
+' ================================
+
+' CONSTRUCTOR
+Constructor --> UC_SR1
+Constructor --> UC_SR2
+Constructor --> UC_SG1
+Constructor --> UC_CC1
+Constructor --> UC_CC2
+Constructor --> UC_CC3
+Constructor --> UC_P1
+Constructor --> UC_P2
+Constructor --> UC_A1
+Constructor --> UC_A2
+Constructor --> UC_A3
+Constructor --> UC_PAG1
+Constructor --> UC_PAG2
+Constructor --> UC_R1
+Constructor --> UC_R2
+
+' EMPRESA
+Empresa --> UC_CE1
+Empresa --> UC_CE2
+Empresa --> UC_CE3
+Empresa --> UC_P3
+Empresa --> UC_P4
+Empresa --> UC_A1
+Empresa --> UC_A2
+Empresa --> UC_A3
+Empresa --> UC_A4
+Empresa --> UC_D1
+Empresa --> UC_D2
+Empresa --> UC_PAG3
+Empresa --> UC_R3
+Empresa --> UC_I1
+Empresa --> UC_I2
+Empresa --> UC_I3
+
+' ADMIN
+Admin --> UC_AU1
+Admin --> UC_AU2
+Admin --> UC_AU3
+Admin --> UC_AU4
+Admin --> UC_AU5
+Admin --> UC_AU6
+
+' ================================
+' DEPENDENCIAS CLAVE
+' ================================
+UC_SR1 ..> UC_SR3 : "<<include>>"
+UC_CE3 ..> UC_SR3 : "<<include>>"
+UC_CC3 ..> UC_P1 : "<<extend>>"
+UC_P1 ..> UC_N1 : "<<include>>"
+UC_A4 ..> UC_AU1 : "<<include>>"
+UC_PAG1 ..> UC_PAG3 : "<<include>>"
+
+' ================================
+' NOTAS COMPACTAS
+' ================================
+note top of UC_SR1
+  **IA para extracción**
+  **automática de productos**
+end note
+
+note top of UC_CE3
+  **Firebase Storage**
+  **para archivos empresa**
+end note
+
+note top of UC_N1
+  **Notificaciones**
+  **tiempo real**
+end note
+
+@enduml

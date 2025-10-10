@@ -339,16 +339,29 @@ const Requests = () => {
           });
         });
         
-        // 2. Para cada solicitud, obtener el número de cotizaciones
+        // 2. Para cada solicitud, obtener el número de cotizaciones (tradicionales + rápidas)
         const solicitudesConCotizaciones = await Promise.all(
           backendData.map(async (solicitud) => {
             try {
-              // Obtener cotizaciones para esta solicitud
-              const response = await fetch(`http://localhost:8090/api/proposals/solicitud/${solicitud.id}`);
-              const cotizaciones = response.ok ? await response.json() : [];
+              // Obtener cotizaciones tradicionales
+              const responseTradicional = await fetch(`http://localhost:8090/api/proposals/solicitud/${solicitud.id}`);
+              const cotizacionesTradicionales = responseTradicional.ok ? await responseTradicional.json() : [];
+              
+              // Obtener cotizaciones rápidas
+              const responseRapidas = await fetch(`http://localhost:8090/api/proposals/quick-responses/solicitud/${solicitud.id}`);
+              const cotizacionesRapidas = responseRapidas.ok ? await responseRapidas.json() : [];
+              
+              const totalCotizaciones = cotizacionesTradicionales.length + cotizacionesRapidas.length;
+              
+              console.log(`📊 Solicitud ${solicitud.id} (${solicitud.titulo}):`, {
+                tradicionales: cotizacionesTradicionales.length,
+                rapidas: cotizacionesRapidas.length,
+                total: totalCotizaciones
+              });
+              
               return {
                 ...solicitud,
-                quotesCount: cotizaciones.length
+                quotesCount: totalCotizaciones
               };
             } catch (error) {
               console.error(`Error obteniendo cotizaciones para solicitud ${solicitud.id}:`, error);

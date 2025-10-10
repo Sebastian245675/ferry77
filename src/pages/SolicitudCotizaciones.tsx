@@ -16,6 +16,13 @@ interface Proposal {
   status: string;
   createdAt: string;
   itemsCount: number;
+  // Campos específicos de Quick Response
+  isQuickResponse?: boolean;
+  responseType?: string; // 'message', 'image', 'excel'
+  message?: string;
+  fileName?: string;
+  fileUrl?: string;
+  fileType?: string;
 }
 
 interface Solicitud {
@@ -64,16 +71,31 @@ const SolicitudCotizaciones: React.FC = () => {
           setSolicitud(solicitudData);
         }
 
-        // 2. Cargar cotizaciones para esta solicitud
+        // 2. Cargar COTIZACIONES TRADICIONALES
         const proposalsResponse = await fetch(`http://localhost:8090/api/proposals/solicitud/${solicitudId}`);
+        let proposalsData: any[] = [];
         if (proposalsResponse.ok) {
-          const proposalsData = await proposalsResponse.json();
-          console.log('📊 Datos de cotizaciones recibidos:', proposalsData);
-          
-          // 3. Para cada cotización, enriquecer con datos de la empresa
-          const enrichedProposals = await Promise.all(
-            proposalsData.map(async (proposal: any) => {
-              console.log('🔍 Procesando cotización:', proposal);
+          proposalsData = await proposalsResponse.json();
+          console.log('📊 Cotizaciones tradicionales recibidas:', proposalsData.length);
+        }
+
+        // 3. Cargar COTIZACIONES RÁPIDAS (Quick Responses)
+        const quickResponsesResponse = await fetch(`http://localhost:8090/api/proposals/quick-responses/solicitud/${solicitudId}`);
+        let quickResponsesData: any[] = [];
+        if (quickResponsesResponse.ok) {
+          quickResponsesData = await quickResponsesResponse.json();
+          console.log('⚡ Cotizaciones rápidas recibidas:', quickResponsesData.length);
+          console.log('⚡ Datos de cotizaciones rápidas:', quickResponsesData);
+        }
+
+        // 4. COMBINAR ambos tipos de cotizaciones
+        const allProposalsData = [...proposalsData, ...quickResponsesData];
+        console.log('📊 Total de cotizaciones (tradicionales + rápidas):', allProposalsData.length);
+
+        // 5. Para cada cotización, enriquecer con datos de la empresa
+        const enrichedProposals = await Promise.all(
+          allProposalsData.map(async (proposal: any) => {
+            console.log('🔍 Procesando cotización:', proposal);
               try {
                 // Obtener información de la empresa por ID numérico
                 console.log('🔍 Buscando empresa con ID:', proposal.companyId);
@@ -126,6 +148,10 @@ const SolicitudCotizaciones: React.FC = () => {
 
                 console.log('🏷️ Nombre final seleccionado:', displayName);
 
+                // Detectar si es una cotización rápida (Quick Response)
+                const isQuickResponse = proposal.responseType !== undefined;
+                console.log(`📋 Tipo: ${isQuickResponse ? 'Cotización Rápida' : 'Cotización Tradicional'}`);
+
                 const enriched = {
                   id: proposal.id,
                   companyId: proposal.companyId,
@@ -139,7 +165,14 @@ const SolicitudCotizaciones: React.FC = () => {
                   status: proposal.status,
                   createdAt: proposal.createdAt,
                   itemsCount: proposal.items ? proposal.items.length : 1,
-                  currency: proposal.currency || 'COP'
+                  currency: proposal.currency || 'COP',
+                  // Campos específicos de Quick Response
+                  isQuickResponse: isQuickResponse,
+                  responseType: proposal.responseType,
+                  message: proposal.message,
+                  fileName: proposal.fileName,
+                  fileUrl: proposal.fileUrl,
+                  fileType: proposal.fileType
                 };
                 
                 console.log('✅ Cotización enriquecida:', enriched);
@@ -163,10 +196,9 @@ const SolicitudCotizaciones: React.FC = () => {
             })
           );
 
-          // Ordenar por precio (menor a mayor)
-          enrichedProposals.sort((a, b) => a.totalPrice - b.totalPrice);
-          setProposals(enrichedProposals);
-        }
+        // Ordenar por precio (menor a mayor)
+        enrichedProposals.sort((a, b) => a.totalPrice - b.totalPrice);
+        setProposals(enrichedProposals);
 
       } catch (error) {
         console.error('Error cargando datos:', error);
@@ -268,7 +300,13 @@ const SolicitudCotizaciones: React.FC = () => {
               <div 
                 key={proposal.id} 
                 className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 hover:shadow-md transition-shadow cursor-pointer"
-                onClick={() => navigate(`/cotizacion-detalle/${proposal.id}`)}
+                onClick={() => {
+                  if (proposal.isQuickResponse) {
+                    navigate(`/cotizacion-detalle/${proposal.id}?type=quick`);
+                  } else {
+                    navigate(`/cotizacion-detalle/${proposal.id}`);
+                  }
+                }}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3 flex-1">
@@ -301,23 +339,55 @@ const SolicitudCotizaciones: React.FC = () => {
                         </div>
                         <span>•</span>
                         <span>{formatDate(proposal.createdAt)}</span>
-                        <span>•</span>
-                        <span>{proposal.itemsCount} item{proposal.itemsCount !== 1 ? 's' : ''}</span>
+                        {!proposal.isQuickResponse && (
+                          <>
+                            <span>•</span>
+                            <span>{proposal.itemsCount} item{proposal.itemsCount !== 1 ? 's' : ''}</span>
+                          </>
+                        )}
+                        {proposal.isQuickResponse && (
+                          <>
+                            <span>•</span>
+                            <span className="bg-purple-100 text-purple-800 px-2 py-0.5 rounded">Respuesta Rápida</span>
+                          </>
+                        )}
                       </div>
+                      
+                      {/* Mostrar preview de mensaje o archivo para Quick Responses */}
+                      {proposal.isQuickResponse && (
+                        <div className="mt-2 text-sm text-gray-600">
+                          {proposal.responseType === 'message' && proposal.message && (
+                            <p className="truncate">💬 {proposal.message}</p>
+                          )}
+                          {proposal.responseType === 'image' && proposal.fileName && (
+                            <p className="truncate">🖼️ {proposal.fileName}</p>
+                          )}
+                          {proposal.responseType === 'excel' && proposal.fileName && (
+                            <p className="truncate">📊 {proposal.fileName}</p>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
 
                   {/* Precio y botón */}
                   <div className="flex items-center gap-3">
-                    <div className="text-right">
-                      <p className="text-lg font-bold text-green-600">{formatPrice(proposal.totalPrice)}</p>
-                      <p className="text-xs text-gray-500">{proposal.deliveryTime}</p>
-                      {index === 0 && (
-                        <span className="inline-block bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full mt-1">
-                          Mejor precio
-                        </span>
-                      )}
-                    </div>
+                    {!proposal.isQuickResponse && (
+                      <div className="text-right">
+                        <p className="text-lg font-bold text-green-600">{formatPrice(proposal.totalPrice)}</p>
+                        <p className="text-xs text-gray-500">{proposal.deliveryTime}</p>
+                        {index === 0 && (
+                          <span className="inline-block bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full mt-1">
+                            Mejor precio
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {proposal.isQuickResponse && (
+                      <div className="text-right">
+                        <p className="text-sm font-semibold text-purple-600">Ver cotización</p>
+                      </div>
+                    )}
                     <ChevronRight className="h-5 w-5 text-gray-400" />
                   </div>
                 </div>

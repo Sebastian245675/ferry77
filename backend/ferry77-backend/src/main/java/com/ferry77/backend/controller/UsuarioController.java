@@ -216,4 +216,39 @@ public class UsuarioController {
             return ResponseEntity.badRequest().body(Map.of("error", "Error sincronizando usuario: " + e.getMessage()));
         }
     }
+    
+    @PutMapping("/update-firebase-uid")
+    public ResponseEntity<?> updateFirebaseUid(@RequestBody Map<String, String> request) {
+        try {
+            String email = request.get("email");
+            String newFirebaseUid = request.get("firebaseUid");
+            
+            if (email == null || email.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Email es requerido"));
+            }
+            
+            if (newFirebaseUid == null || newFirebaseUid.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Firebase UID es requerido"));
+            }
+            
+            Usuario usuario = usuarioRepository.findByEmail(email);
+            if (usuario == null) {
+                return ResponseEntity.notFound().build();
+            }
+            
+            System.out.println("[UPDATE] Actualizando Firebase UID para usuario: " + email);
+            System.out.println("[UPDATE] UID anterior: " + usuario.getFirebaseUid());
+            System.out.println("[UPDATE] UID nuevo: " + newFirebaseUid);
+            
+            usuario.setFirebaseUid(newFirebaseUid);
+            Usuario updatedUser = usuarioRepository.save(usuario);
+            
+            System.out.println("[UPDATE] Firebase UID actualizado exitosamente");
+            return ResponseEntity.ok(updatedUser);
+            
+        } catch (Exception e) {
+            System.err.println("[ERROR] Error actualizando Firebase UID: " + e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", "Error actualizando UID: " + e.getMessage()));
+        }
+    }
 }

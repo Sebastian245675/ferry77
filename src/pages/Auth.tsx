@@ -9,7 +9,8 @@ import {
   createUserWithEmailAndPassword, 
   signInWithEmailAndPassword,
   GoogleAuthProvider,
-  signInWithPopup
+  signInWithPopup,
+  sendPasswordResetEmail
 } from 'firebase/auth';
 import { FaGoogle, FaFacebookF } from 'react-icons/fa';
 
@@ -55,6 +56,8 @@ const Auth = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [lastAttempt, setLastAttempt] = useState<number>(0);
   const [attemptCount, setAttemptCount] = useState<number>(0);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [resetEmailSent, setResetEmailSent] = useState(false);
   
   // Estados para el flujo de verificación por email
   const [emailVerificationStep, setEmailVerificationStep] = useState<'email' | 'verification' | 'password' | 'complete'>('email');
@@ -316,6 +319,44 @@ const Auth = () => {
     }
   };
 
+  // Función para recuperar contraseña
+  const handleForgotPassword = async () => {
+    if (!formData.email) {
+      setError('Por favor ingresa tu email');
+      return;
+    }
+    
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      await sendPasswordResetEmail(auth, formData.email.trim());
+      setResetEmailSent(true);
+      setError(null);
+      console.log('✅ Email de recuperación enviado a:', formData.email);
+    } catch (error: any) {
+      console.error('❌ Error enviando email de recuperación:', error);
+      
+      let errorMessage = '';
+      switch (error.code) {
+        case 'auth/user-not-found':
+          errorMessage = '❌ No existe una cuenta con este email.';
+          break;
+        case 'auth/invalid-email':
+          errorMessage = '❌ Email inválido.';
+          break;
+        case 'auth/too-many-requests':
+          errorMessage = '⏳ Demasiados intentos. Espera unos minutos.';
+          break;
+        default:
+          errorMessage = `Error: ${error.message}`;
+      }
+      setError(errorMessage);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -337,28 +378,61 @@ const Auth = () => {
     try {
       if (isLogin) {
         // Login con Firebase
-        const userCredential = await signInWithEmailAndPassword(auth, formData.email, formData.password);
+        console.log('🔐 Intentando login con:', { email: formData.email, passwordLength: formData.password?.length });
+        console.log('📧 Email sin espacios:', formData.email.trim() === formData.email);
+        
+        const userCredential = await signInWithEmailAndPassword(auth, formData.email.trim(), formData.password);
+        console.log('✅ Login exitoso:', userCredential.user.uid);
+        
         localStorage.setItem('userAuthenticated', 'true');
         localStorage.setItem('userId', userCredential.user.uid);
         
         // Detectar tipo de usuario desde el backend
         try {
+          console.log('🔍 Consultando backend para UID:', userCredential.user.uid);
           const response = await fetch(`http://localhost:8090/api/usuarios/firebase/${userCredential.user.uid}`);
+          console.log('📡 Response status:', response.status, response.statusText);
           
           if (response.ok) {
             const userData = await response.json();
+            console.log('👤 Datos del usuario recibidos:', userData);
+            console.log('🏢 userType:', userData.userType);
+            console.log('🎭 rol:', userData.rol);
+            console.log('✉️ email:', userData.email);
+            console.log('🆔 id:', userData.id);
+            console.log('📊 Verificando userType === "empresa":', userData.userType === 'empresa');
+            console.log('📊 Verificando rol === "empresa":', userData.rol === 'empresa');
             
-            if (userData.userType === 'empresa') {
+            // Guardar datos importantes en localStorage
+            if (userData.userType) {
+              localStorage.setItem('userType', userData.userType);
+            }
+            if (userData.rol) {
+              localStorage.setItem('userRole', userData.rol);
+            }
+            if (userData.id) {
+              localStorage.setItem('userDbId', userData.id.toString());
+            }
+            
+            // Verificar si es empresa usando userType O rol
+            const isEmpresa = userData.userType === 'empresa' || userData.rol === 'empresa';
+            
+            if (isEmpresa) {
+              console.log('✅ Usuario identificado como EMPRESA - Redirigiendo a /backoffice');
               window.location.href = '/backoffice';
             } else {
+              console.log('✅ Usuario identificado como CLIENTE - Redirigiendo a /dashboard');
               window.location.href = '/dashboard';
             }
           } else {
+            console.warn('⚠️ Backend no encontró el usuario, status:', response.status);
+            console.log('📍 Redirigiendo a /dashboard por defecto');
             // Si no existe en backend, redirigir como usuario normal
             window.location.href = '/dashboard';
           }
         } catch (backendError) {
-          console.error('Error consultando backend:', backendError);
+          console.error('❌ Error consultando backend:', backendError);
+          console.log('📍 Redirigiendo a /dashboard por error');
           // En caso de error, redirigir como usuario normal
           window.location.href = '/dashboard';
         }
@@ -374,7 +448,10 @@ const Auth = () => {
         }
       }
     } catch (err: any) {
-      console.error("Error en autenticación:", err);
+      console.error("❌ Error en autenticación:", err);
+      console.error("📝 Código de error:", err.code);
+      console.error("📝 Mensaje de error:", err.message);
+      console.error("📝 Error completo:", JSON.stringify(err, null, 2));
       
       // Incrementar contador de intentos fallidos
       setAttemptCount(prev => prev + 1);
@@ -383,25 +460,28 @@ const Auth = () => {
       let errorMessage = '';
       switch (err.code) {
         case 'auth/invalid-credential':
-          errorMessage = 'Credenciales incorrectas. Verifica tu email y contraseña.';
+          errorMessage = '❌ Email o contraseña incorrectos. Si estás seguro de tus credenciales, es posible que la cuenta no exista o haya sido deshabilitada.';
           break;
         case 'auth/too-many-requests':
-          errorMessage = 'Demasiados intentos fallidos. Espera unos minutos antes de intentar nuevamente.';
+          errorMessage = '🚫 Demasiados intentos fallidos. Tu cuenta ha sido temporalmente bloqueada. Espera 15-30 minutos o restablece tu contraseña.';
           break;
         case 'auth/user-not-found':
-          errorMessage = 'No existe una cuenta con este email.';
+          errorMessage = '👤 No existe una cuenta con este email. ¿Quieres registrarte?';
           break;
         case 'auth/wrong-password':
-          errorMessage = 'Contraseña incorrecta.';
+          errorMessage = '🔑 Contraseña incorrecta. ¿Olvidaste tu contraseña?';
           break;
         case 'auth/invalid-email':
-          errorMessage = 'Email inválido.';
+          errorMessage = '📧 Formato de email inválido.';
           break;
         case 'auth/network-request-failed':
-          errorMessage = 'Error de conexión. Verifica tu conexión a internet.';
+          errorMessage = '🌐 Error de conexión. Verifica tu conexión a internet.';
+          break;
+        case 'auth/user-disabled':
+          errorMessage = '🚫 Esta cuenta ha sido deshabilitada. Contacta al soporte.';
           break;
         default:
-          errorMessage = err.message || 'Error de autenticación';
+          errorMessage = `⚠️ Error: ${err.message || 'Error de autenticación desconocido'}`;
       }
       
       setError(errorMessage);
@@ -754,6 +834,19 @@ const Auth = () => {
               </>
             )}
 
+            {/* Enlace de recuperación de contraseña */}
+            {isLogin && (
+              <div className="flex justify-end mt-2 mb-4">
+                <button
+                  type="button"
+                  onClick={() => setShowForgotPassword(true)}
+                  className="text-sm text-blue-600 hover:text-blue-800 hover:underline"
+                >
+                  ¿Olvidaste tu contraseña?
+                </button>
+              </div>
+            )}
+
             {/* Mostrar el botón de registro solo cuando esté completamente verificado o para login */}
             {(isLogin || emailVerificationStep === 'complete') && (
               <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700" disabled={isLoading}>
@@ -820,6 +913,69 @@ const Auth = () => {
             </p>
           </div>
         </div>
+
+        {/* Modal de recuperación de contraseña */}
+        {showForgotPassword && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg p-6 max-w-md w-full">
+              <h3 className="text-xl font-bold mb-4 text-gray-900">Recuperar contraseña</h3>
+              
+              {resetEmailSent ? (
+                <div className="text-center">
+                  <div className="mb-4 text-green-600">
+                    ✅ Email enviado correctamente
+                  </div>
+                  <p className="text-gray-600 mb-4">
+                    Revisa tu bandeja de entrada (y spam) en <strong>{formData.email}</strong>
+                  </p>
+                  <Button
+                    onClick={() => {
+                      setShowForgotPassword(false);
+                      setResetEmailSent(false);
+                    }}
+                    className="w-full"
+                  >
+                    Cerrar
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <p className="text-gray-600 mb-4">
+                    Ingresa tu email y te enviaremos un enlace para restablecer tu contraseña.
+                  </p>
+                  <Input
+                    type="email"
+                    placeholder="tu@email.com"
+                    value={formData.email}
+                    onChange={(e) => setFormData({...formData, email: e.target.value})}
+                    className="mb-4 text-gray-900"
+                  />
+                  {error && <div className="text-red-500 mb-4 text-sm">{error}</div>}
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={() => {
+                        setShowForgotPassword(false);
+                        setError(null);
+                      }}
+                      variant="outline"
+                      className="flex-1"
+                      disabled={isLoading}
+                    >
+                      Cancelar
+                    </Button>
+                    <Button
+                      onClick={handleForgotPassword}
+                      className="flex-1 bg-blue-600 hover:bg-blue-700"
+                      disabled={isLoading || !formData.email}
+                    >
+                      {isLoading ? 'Enviando...' : 'Enviar email'}
+                    </Button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Botón para Formulario Supremo */}
         <div className="mt-8 text-center">

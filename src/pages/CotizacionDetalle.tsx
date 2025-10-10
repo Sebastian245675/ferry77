@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Building2, Star, Verified, Phone, MessageCircle, Clock, CheckCircle, Package } from 'lucide-react';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { ArrowLeft, Building2, Star, Verified, Phone, MessageCircle, Clock, CheckCircle, Package, Image as ImageIcon, FileSpreadsheet } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import BottomNavigation from '../components/BottomNavigation';
 import '../styles/cotizacion-detalle.css';
@@ -31,6 +31,13 @@ interface ProposalDetail {
   createdAt: string;
   notes?: string;
   validUntil?: string;
+  // Campos para QuickResponse
+  isQuickResponse?: boolean;
+  responseType?: string;
+  message?: string;
+  fileName?: string;
+  fileUrl?: string;
+  fileType?: string;
 }
 
 interface Solicitud {
@@ -46,10 +53,12 @@ interface Solicitud {
 
 const CotizacionDetalle: React.FC = () => {
   const { proposalId } = useParams<{ proposalId: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const [proposal, setProposal] = useState<ProposalDetail | null>(null);
   const [solicitud, setSolicitud] = useState<Solicitud | null>(null);
   const [loading, setLoading] = useState(true);
+  const isQuickResponse = searchParams.get('type') === 'quick';
 
   useEffect(() => {
     const loadData = async () => {
@@ -58,7 +67,66 @@ const CotizacionDetalle: React.FC = () => {
       try {
         setLoading(true);
 
-        // 1. Cargar detalles de la cotización
+        // Verificar si es una QuickResponse
+        if (isQuickResponse) {
+          console.log('🚀 Cargando QuickResponse ID:', proposalId);
+          
+          // 1. Cargar datos de la QuickResponse
+          const quickResponse = await fetch(`http://localhost:8090/api/proposals/quick-responses/${proposalId}`);
+          if (quickResponse.ok) {
+            const quickData = await quickResponse.json();
+            console.log('📦 Datos de QuickResponse:', quickData);
+
+            // 2. Obtener información de la empresa
+            const companyResponse = await fetch(`http://localhost:8090/api/usuarios/${quickData.companyId}`);
+            const companyData = companyResponse.ok ? await companyResponse.json() : null;
+
+            // 3. Obtener información de la solicitud
+            const solicitudResponse = await fetch(`http://localhost:8090/api/solicitudes/${quickData.solicitudId}`);
+            const solicitudData = solicitudResponse.ok ? await solicitudResponse.json() : null;
+            setSolicitud(solicitudData);
+
+            // Determinar el mejor nombre para la empresa
+            let displayName = quickData.companyName;
+            if (companyData?.companyName) {
+              displayName = companyData.companyName;
+            } else if (companyData?.nick) {
+              displayName = companyData.nick;
+            }
+
+            const enrichedProposal: ProposalDetail = {
+              id: quickData.id,
+              companyId: quickData.companyId,
+              companyName: displayName,
+              companyLogo: companyData?.logo,
+              companyRating: companyData?.rating || 4.5,
+              companyVerified: companyData?.verified || false,
+              companyPhone: companyData?.telefono,
+              companyEmail: companyData?.email,
+              companyAddress: companyData?.direccion,
+              totalPrice: 0, // QuickResponse no tiene precio hasta que se negocie
+              deliveryTime: 'Por definir',
+              status: quickData.status || 'SENT',
+              items: [],
+              createdAt: quickData.createdAt,
+              notes: quickData.message,
+              // Campos específicos de QuickResponse
+              isQuickResponse: true,
+              responseType: quickData.responseType,
+              message: quickData.message,
+              fileName: quickData.fileName,
+              fileUrl: quickData.fileUrl,
+              fileType: quickData.fileType
+            };
+
+            console.log('✅ QuickResponse enriquecida:', enrichedProposal);
+            setProposal(enrichedProposal);
+            setLoading(false);
+            return;
+          }
+        }
+
+        // Lógica original para cotizaciones tradicionales        // 1. Cargar detalles de la cotización
         const proposalResponse = await fetch(`http://localhost:8090/api/proposals/${proposalId}`);
         if (proposalResponse.ok) {
           const proposalData = await proposalResponse.json();
@@ -370,7 +438,80 @@ const CotizacionDetalle: React.FC = () => {
                 </div>
               </div>
 
+              {/* Respuesta Rápida - Mostrar archivo/imagen adjunta */}
+              {proposal.isQuickResponse && (
+                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 fade-in-up">
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="bg-purple-100 p-2 rounded-lg">
+                      {proposal.responseType === 'image' && <ImageIcon className="h-5 w-5 text-purple-600" />}
+                      {proposal.responseType === 'excel' && <FileSpreadsheet className="h-5 w-5 text-purple-600" />}
+                      {proposal.responseType === 'message' && <MessageCircle className="h-5 w-5 text-purple-600" />}
+                    </div>
+                    <h3 className="text-lg md:text-xl font-semibold text-gray-900">
+                      {proposal.responseType === 'image' && 'Imagen de cotización'}
+                      {proposal.responseType === 'excel' && 'Archivo de cotización'}
+                      {proposal.responseType === 'message' && 'Mensaje de cotización'}
+                    </h3>
+                  </div>
+
+                  {/* Mostrar mensaje si existe */}
+                  {proposal.message && (
+                    <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 mb-4">
+                      <p className="text-gray-700 whitespace-pre-wrap">{proposal.message}</p>
+                    </div>
+                  )}
+
+                  {/* Mostrar imagen */}
+                  {proposal.responseType === 'image' && proposal.fileUrl && (
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <img 
+                        src={proposal.fileUrl} 
+                        alt={proposal.fileName || 'Cotización'}
+                        className="w-full h-auto rounded-lg shadow-md max-h-96 object-contain"
+                        onError={(e) => {
+                          console.error('Error cargando imagen:', proposal.fileUrl);
+                          (e.target as HTMLImageElement).src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100"%3E%3Crect fill="%23f3f4f6" width="100" height="100"/%3E%3Ctext fill="%239ca3af" font-family="sans-serif" font-size="14" x="50%25" y="50%25" text-anchor="middle" dominant-baseline="middle"%3EImagen no disponible%3C/text%3E%3C/svg%3E';
+                        }}
+                      />
+                      {proposal.fileName && (
+                        <p className="text-sm text-gray-500 mt-2 text-center">{proposal.fileName}</p>
+                      )}
+                      <div className="mt-4 flex justify-center">
+                        <a 
+                          href={proposal.fileUrl} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="bg-purple-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-purple-700 transition-all duration-200 flex items-center gap-2"
+                        >
+                          <ImageIcon className="h-4 w-4" />
+                          Ver imagen completa
+                        </a>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Mostrar archivo Excel */}
+                  {proposal.responseType === 'excel' && proposal.fileUrl && (
+                    <div className="bg-gray-50 rounded-lg p-4 text-center">
+                      <FileSpreadsheet className="h-16 w-16 text-green-600 mx-auto mb-3" />
+                      {proposal.fileName && (
+                        <p className="text-sm font-medium text-gray-700 mb-3">{proposal.fileName}</p>
+                      )}
+                      <a 
+                        href={proposal.fileUrl} 
+                        download={proposal.fileName}
+                        className="bg-green-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-green-700 transition-all duration-200 inline-flex items-center gap-2"
+                      >
+                        <FileSpreadsheet className="h-4 w-4" />
+                        Descargar archivo
+                      </a>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Productos cotizados */}
+              {!proposal.isQuickResponse && (
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 <h3 className="text-lg md:text-xl font-semibold text-gray-900 mb-6">Productos cotizados</h3>
                 
@@ -415,6 +556,7 @@ const CotizacionDetalle: React.FC = () => {
                   </div>
                 )}
               </div>
+              )}
 
               {/* Comparación con lo solicitado */}
               {solicitud && (
@@ -464,6 +606,7 @@ const CotizacionDetalle: React.FC = () => {
                 <h3 className="text-lg md:text-xl font-semibold text-gray-900 mb-6">Resumen</h3>
                 
                 <div className="space-y-4 mb-6">
+                  {!proposal.isQuickResponse && (
                   <div className="price-gradient rounded-lg p-4 text-white modern-shadow">
                     <div className="flex items-center gap-2 mb-2">
                       <Package className="h-5 w-5 text-white" />
@@ -471,6 +614,17 @@ const CotizacionDetalle: React.FC = () => {
                     </div>
                     <p className="text-2xl md:text-3xl font-bold text-white">{formatPrice(proposal.totalPrice)}</p>
                   </div>
+                  )}
+
+                  {proposal.isQuickResponse && (
+                  <div className="bg-purple-100 rounded-lg p-4 border-2 border-purple-300 modern-shadow">
+                    <div className="flex items-center gap-2 mb-2">
+                      <MessageCircle className="h-5 w-5 text-purple-600" />
+                      <span className="text-sm font-medium text-purple-900">Respuesta Rápida</span>
+                    </div>
+                    <p className="text-sm text-purple-700">Esta empresa ha enviado una cotización rápida. Revisa la imagen o archivo adjunto para ver los detalles.</p>
+                  </div>
+                  )}
                   
                   <div className="delivery-gradient rounded-lg p-4 text-white modern-shadow">
                     <div className="flex items-center gap-2 mb-2">

@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Crear Usuario de Prueba - Ferry77</title>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+</head>
+<body>
+    <h1>Crear Usuario de Prueba para Ferry77</h1>
+    
+    <div>
+        <h3>Crear nuevo usuario:</h3>
+        <input type="email" id="email" placeholder="Email" value="test@ferry77.com">
+        <input type="password" id="password" placeholder="Contraseña" value="test123456">
+        <button onclick="createUser()">Crear Usuario</button>
+    </div>
+    
+    <div>
+        <h3>Probar login:</h3>
+        <input type="email" id="loginEmail" placeholder="Email" value="test@ferry77.com">
+        <input type="password" id="loginPassword" placeholder="Contraseña" value="test123456">
+        <button onclick="testLogin()">Probar Login</button>
+    </div>
+    
+    <div id="result"></div>
+
+    <script>
+        // Configuración de Firebase (la misma que en tu app)
+        const firebaseConfig = {
+            apiKey: "AIzaSyBKj78IBmypAj8F3OkGiLB9Tdhpp_OOrFk",
+            authDomain: "ferry-67757.firebaseapp.com",
+            projectId: "ferry-67757",
+            storageBucket: "ferry-67757.firebasestorage.app",
+            messagingSenderId: "583953685438",
+            appId: "1:583953685438:web:6d8a4d39d9cd40ff8537ef",
+            measurementId: "G-TGN3ZNSB59"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+
+        function log(message) {
+            document.getElementById('result').innerHTML += '<p>' + message + '</p>';
+            console.log(message);
+        }
+
+        async function createUser() {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            
+            try {
+                const userCredential = await auth.createUserWithEmailAndPassword(email, password);
+                log('✅ Usuario creado exitosamente: ' + userCredential.user.email);
+                log('UID: ' + userCredential.user.uid);
+            } catch (error) {
+                log('❌ Error creando usuario: ' + error.message);
+                log('Código de error: ' + error.code);
+            }
+        }
+
+        async function testLogin() {
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+            
+            try {
+                const userCredential = await auth.signInWithEmailAndPassword(email, password);
+                log('✅ Login exitoso: ' + userCredential.user.email);
+                log('UID: ' + userCredential.user.uid);
+            } catch (error) {
+                log('❌ Error en login: ' + error.message);
+                log('Código de error: ' + error.code);
+            }
+        }
+
+        // Detectar cambios en el estado de autenticación
+        auth.onAuthStateChanged(function(user) {
+            if (user) {
+                log('👤 Usuario autenticado: ' + user.email);
+            } else {
+                log('👤 No hay usuario autenticado');
+            }
+        });
+    </script>
+</body>
+</html>
