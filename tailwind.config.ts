@@ -19,6 +19,10 @@ export default {
 			}
 		},
 		extend: {
+			fontFamily: {
+				sans: ["var(--font-sans)", "sans-serif"],
+				display: ["var(--font-display)", "sans-serif"],
+			},
 			fontSize: {
 				'2xs': '0.625rem', // 10px
 			},
@@ -32,29 +36,24 @@ export default {
 				background: 'hsl(var(--background))',
 				foreground: 'hsl(var(--foreground))',
 				primary: {
-					DEFAULT: 'hsl(210, 100%, 50%)',
-					foreground: 'hsl(0, 0%, 100%)',
-					50: 'hsl(210, 100%, 95%)',
-					100: 'hsl(210, 100%, 90%)',
-					500: 'hsl(210, 100%, 50%)',
-					600: 'hsl(210, 100%, 45%)',
-					700: 'hsl(210, 100%, 40%)',
+					DEFAULT: "hsl(var(--primary))",
+					foreground: "hsl(var(--primary-foreground))",
 				},
 				secondary: {
-					DEFAULT: 'hsl(210, 40%, 96.1%)',
-					foreground: 'hsl(222.2, 47.4%, 11.2%)'
+					DEFAULT: "hsl(var(--secondary))",
+					foreground: "hsl(var(--secondary-foreground))",
 				},
 				destructive: {
-					DEFAULT: 'hsl(0, 84.2%, 60.2%)',
-					foreground: 'hsl(210, 40%, 98%)'
+					DEFAULT: "hsl(var(--destructive))",
+					foreground: "hsl(var(--destructive-foreground))",
 				},
 				muted: {
-					DEFAULT: 'hsl(210, 40%, 96.1%)',
-					foreground: 'hsl(215.4, 16.3%, 46.9%)'
+					DEFAULT: "hsl(var(--muted))",
+					foreground: "hsl(var(--muted-foreground))",
 				},
 				accent: {
-					DEFAULT: 'hsl(210, 40%, 96.1%)',
-					foreground: 'hsl(222.2, 47.4%, 11.2%)'
+					DEFAULT: "hsl(var(--accent))",
+					foreground: "hsl(var(--accent-foreground))",
 				},
 				popover: {
 					DEFAULT: 'hsl(var(--popover))',
@@ -64,16 +63,6 @@ export default {
 					DEFAULT: 'hsl(var(--card))',
 					foreground: 'hsl(var(--card-foreground))'
 				},
-				sidebar: {
-					DEFAULT: 'hsl(var(--sidebar-background))',
-					foreground: 'hsl(var(--sidebar-foreground))',
-					primary: 'hsl(var(--sidebar-primary))',
-					'primary-foreground': 'hsl(var(--sidebar-primary-foreground))',
-					accent: 'hsl(var(--sidebar-accent))',
-					'accent-foreground': 'hsl(var(--sidebar-accent-foreground))',
-					border: 'hsl(var(--sidebar-border))',
-					ring: 'hsl(var(--sidebar-ring))'
-				}
 			},
 			borderRadius: {
 				lg: 'var(--radius)',
@@ -130,7 +119,6 @@ export default {
 				'accordion-down': 'accordion-down 0.2s ease-out',
 				'accordion-up': 'accordion-up 0.2s ease-out',
 				'fadeIn': 'fade-in 0.3s ease-out forwards',
-				'fade-in': 'fade-in 0.3s ease-out',
 				'slide-up': 'slide-up 0.3s ease-out',
 				'pulse-soft': 'pulse-soft 2s ease-in-out infinite'
 			},
