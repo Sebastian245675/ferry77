@@ -1,23 +1,106 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, Package, Truck, Clock, Shield, Star, Users, CheckCircle, Phone, Mail, MapPin, X, User, Building } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import '../styles/landing-animations.css';
+import { motion, AnimatePresence, Variants } from 'framer-motion';
+import { useInView } from 'react-intersection-observer';
+
+// Tipos
+interface Quote {
+  id: number;
+  company: string;
+  price: number;
+  formattedPrice: string;
+  estimatedTime: string;
+  rating: number;
+  vehicleType: string;
+}
+
+interface PreRegForm {
+  userType: 'cliente' | 'ferreteria';
+  nombre: string;
+  email: string;
+  telefono: string;
+  profesion: string;
+  empresa: string;
+  ciudad: string;
+}
+
+interface Feature {
+  icon: React.ComponentType<any>;
+  title: string;
+  description: string;
+  color: string;
+}
+
+interface Testimonial {
+  name: string;
+  role: string;
+  comment: string;
+  rating: number;
+}
+import {
+  ArrowRight,
+  Building,
+  CheckCircle,
+  Clock,
+  Mail,
+  MapPin,
+  Package,
+  Phone,
+  Shield,
+  Star,
+  Truck,
+  User,
+  Users,
+  X,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import WhyChooseUs from "@/components/WhyChooseUs";
+import { Card, CardContent } from "@/components/ui/card";
+import "../styles/landing-animations.css";
+import "../styles/modern-landing.css";
+import "../styles/inline-styles.css";
+
+// Definimos las animaciones
+const fadeInUp = {
+  hidden: { opacity: 0, y: 20 },
+  visible: { opacity: 1, y: 0 }
+};
+
+const fadeInLeft = {
+  hidden: { opacity: 0, x: -20 },
+  visible: { opacity: 1, x: 0 }
+};
+
+const fadeInRight = {
+  hidden: { opacity: 0, x: 20 },
+  visible: { opacity: 1, x: 0 }
+};
+
+const staggerChildren = {
+  visible: {
+    transition: {
+      staggerChildren: 0.1
+    }
+  }
+};
 
 const Landing = () => {
   const navigate = useNavigate();
+  const [heroRef, heroInView] = useInView({ triggerOnce: true });
+  const [featuresRef, featuresInView] = useInView({ triggerOnce: true });
+  const [testimonialsRef, testimonialsInView] = useInView({ triggerOnce: true });
+  const [ctaRef, ctaInView] = useInView({ triggerOnce: true });
   // Enhanced state management for interactive phone mockup
   const [currentScreen, setCurrentScreen] = useState(0);
   const [backendConnected, setBackendConnected] = useState(false);
-  const [quotes, setQuotes] = useState([]);
+  const [quotes, setQuotes] = useState<Quote[]>([]);
   const [isLoadingQuotes, setIsLoadingQuotes] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   
   // Pre-registration modal state
   const [showPreRegModal, setShowPreRegModal] = useState(false);
-  const [preRegForm, setPreRegForm] = useState({
+  const [preRegForm, setPreRegForm] = useState<PreRegForm>({
     userType: 'cliente',
     nombre: '',
     email: '',
@@ -339,28 +422,28 @@ const Landing = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <motion.div className="min-h-screen bg-gray-50">
       {/* Header */}
       <header className="border-b border-gray-200 bg-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-4">
             <div className="flex items-center">
-              <img 
-                src="/WhatsApp Image 2025-09-16 at 10.15.23 AM.jpeg" 
-                alt="Ferry77 Logo" 
+              <img
+                src="/WhatsApp Image 2025-09-16 at 10.15.23 AM.jpeg"
+                alt="Ferry77 Logo"
                 className="h-12 w-auto"
               />
             </div>
             <div className="flex space-x-4">
-              <Button 
-                variant="outline" 
-                onClick={() => navigate('/auth')}
+              <Button
+                variant="outline"
+                onClick={() => navigate("/auth")}
                 className="hidden sm:inline-flex border-gray-300 text-gray-700 hover:bg-gray-50"
               >
                 Iniciar Sesión
               </Button>
-              <Button 
-                onClick={() => navigate('/auth')}
+              <Button
+                onClick={() => navigate("/auth")}
                 className="bg-blue-600 hover:bg-blue-700 text-white"
               >
                 Registrarse
@@ -371,8 +454,18 @@ const Landing = () => {
       </header>
 
       {/* Hero Section */}
-      <section className="relative overflow-hidden py-20 sm:py-32 bg-white">
-        <div className="absolute inset-0 opacity-5">
+      <motion.section 
+        className="relative overflow-hidden py-20 sm:py-32 bg-white"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.8 }}
+      >
+        <motion.div 
+          className="absolute inset-0 opacity-5"
+          initial={{ scale: 0.8, opacity: 0 }}
+          animate={{ scale: 1, opacity: 0.05 }}
+          transition={{ duration: 1.2 }}
+        >
           <svg width="60" height="60" viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
             <defs>
               <pattern id="hero-pattern" width="60" height="60" patternUnits="userSpaceOnUse">
@@ -384,15 +477,31 @@ const Landing = () => {
             </defs>
             <rect width="100%" height="100%" fill="url(#hero-pattern)" />
           </svg>
-        </div>
+        </motion.div>
         
         <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="lg:grid lg:grid-cols-2 lg:gap-12 lg:items-center">
-            <div>
-              <h1 className="text-5xl sm:text-6xl lg:text-7xl font-semibold text-gray-900 leading-tight mb-8">
+            <motion.div
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.8 }}
+            >
+              <motion.h1 
+                className="text-5xl sm:text-6xl lg:text-7xl font-semibold text-gray-900 leading-tight mb-8"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.8, delay: 0.2 }}
+              >
                 Conectamos profesionales
-                <span className="block text-blue-600"> con proveedores</span>
-              </h1>
+                <motion.span 
+                  className="block text-blue-600"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.8, delay: 0.4 }}
+                > 
+                  con proveedores
+                </motion.span>
+              </motion.h1>
               <p className="mt-8 text-xl sm:text-2xl text-gray-600 leading-relaxed max-w-4xl">
                 Plataforma profesional de transporte empresarial que conecta oficios especializados 
                 con ferreterías y proveedores de materiales de construcción en Colombia.
@@ -407,7 +516,7 @@ const Landing = () => {
                   Registro de Interés
                 </Button>
               </div>
-            </div>
+            </motion.div>
 
             <div className="mt-12 lg:mt-0">
               <div className="relative">
@@ -552,7 +661,7 @@ const Landing = () => {
                                       </div>
                                     </div>
                                     <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                                      <div className="h-full bg-blue-600 rounded-full" style={{width: '100%'}}></div>
+                                      <div className="h-full bg-blue-600 rounded-full quote-progress-bar"></div>
                                     </div>
                                   </div>
                                 ))}
@@ -673,7 +782,7 @@ const Landing = () => {
                       </div>
                       <div className="p-3 space-y-2">
                         {[1,2,3].map(i => (
-                          <div key={i} className="flex items-center space-x-2 p-2 bg-gray-50 rounded-lg" style={{animationDelay: `${i * 0.3}s`}}>
+                          <div key={i} className={`flex items-center space-x-2 p-2 bg-gray-50 rounded-lg transport-item-${i}`}>
                             <div className="w-6 h-6 bg-blue-500 rounded-full"></div>
                             <div className="flex-1">
                               <div className="h-2 bg-gray-200 rounded w-full mb-1"></div>
@@ -689,48 +798,43 @@ const Landing = () => {
             </div>
           </div>
         </div>
-      </section>
+      </motion.section>
 
       {/* Features Section */}
-      <section className="py-16 bg-gray-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl sm:text-4xl font-semibold text-gray-900 mb-4">
-              ¿Por qué elegir Ferry77?
-            </h2>
-            <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-              Plataforma profesional que ofrece soluciones integrales de transporte 
-              para empresas y profesionales del sector construcción.
-            </p>
-          </div>
-
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
-            {features.map((feature, index) => (
-              <Card key={index} className="border border-gray-200 shadow-sm hover:shadow-md transition-shadow duration-200 bg-white">
-                <CardContent className="p-6 text-center">
-                  <div className={`w-16 h-16 ${feature.color} rounded-lg flex items-center justify-center mx-auto mb-4`}>
-                    <feature.icon className="w-8 h-8 text-white" />
-                  </div>
-                  <h3 className="text-xl font-semibold text-gray-900 mb-2">{feature.title}</h3>
-                  <p className="text-gray-600">{feature.description}</p>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </div>
-      </section>
+      <WhyChooseUs />
 
       {/* How it works */}
-      <section className="py-16 bg-white">
+      <motion.section 
+        ref={featuresRef}
+        initial={{ opacity: 0 }}
+        animate={featuresInView ? { opacity: 1 } : {}}
+        transition={{ duration: 0.8 }}
+        className="py-16 bg-white"
+      >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl sm:text-4xl font-semibold text-gray-900 mb-4">
+          <motion.div 
+            className="text-center mb-16"
+            initial={{ opacity: 0, y: 20 }}
+            animate={featuresInView ? { opacity: 1, y: 0 } : {}}
+            transition={{ duration: 0.8, delay: 0.2 }}
+          >
+            <motion.h2 
+              className="text-3xl sm:text-4xl font-semibold text-gray-900 mb-4"
+              initial={{ opacity: 0, y: 20 }}
+              animate={featuresInView ? { opacity: 1, y: 0 } : {}}
+              transition={{ duration: 0.8, delay: 0.4 }}
+            >
               Cómo funciona
-            </h2>
-            <p className="text-lg text-gray-600">
+            </motion.h2>
+            <motion.p 
+              className="text-lg text-gray-600"
+              initial={{ opacity: 0 }}
+              animate={featuresInView ? { opacity: 1 } : {}}
+              transition={{ duration: 0.8, delay: 0.6 }}
+            >
               Proceso simple y eficiente en solo 3 pasos
-            </p>
-          </div>
+            </motion.p>
+          </motion.div>
 
           <div className="grid md:grid-cols-3 gap-8">
             <div className="text-center">
@@ -764,44 +868,73 @@ const Landing = () => {
             </div>
           </div>
         </div>
-      </section>
+      </motion.section>
 
       {/* Testimonials */}
-      <section className="py-16 bg-gray-50">
+      <motion.section
+        ref={testimonialsRef}
+        initial="hidden"
+        animate={testimonialsInView ? "visible" : "hidden"}
+        variants={staggerChildren}
+        className="py-16 bg-gray-50"
+      >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
+          <motion.div
+            className="text-center mb-16"
+            variants={fadeInUp}
+          >
             <h2 className="text-3xl sm:text-4xl font-semibold text-gray-900 mb-4">
               Lo que dicen nuestros usuarios
             </h2>
-          </div>
+          </motion.div>
 
           <div className="grid md:grid-cols-3 gap-8">
             {testimonials.map((testimonial, index) => (
-              <Card key={index} className="border border-gray-200 shadow-sm hover:shadow-md transition-shadow duration-200 bg-white">
-                <CardContent className="p-6">
-                  <div className="flex mb-4">
-                    {[...Array(testimonial.rating)].map((_, i) => (
-                      <Star key={i} className="w-5 h-5 text-amber-400 fill-current" />
-                    ))}
-                  </div>
-                  <p className="text-gray-700 mb-4 italic">"{testimonial.comment}"</p>
-                  <div>
-                    <p className="font-semibold text-gray-900">{testimonial.name}</p>
-                    <p className="text-sm text-gray-600">{testimonial.role}</p>
-                  </div>
-                </CardContent>
-              </Card>
+              <motion.div key={index} variants={fadeInUp}>
+                <Card className="border border-gray-200 shadow-sm hover:shadow-md transition-shadow duration-200 bg-white h-full">
+                  <CardContent className="p-6 flex flex-col h-full">
+                    <div className="flex items-center gap-4 mb-4">
+                      <div className="w-12 h-12 rounded-full bg-gray-200 flex items-center justify-center">
+                        <div className="text-xl font-semibold text-gray-600">
+                          {testimonial.name.charAt(0)}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="font-semibold text-gray-900">{testimonial.name}</p>
+                        <p className="text-sm text-gray-600">{testimonial.role}</p>
+                      </div>
+                    </div>
+                    <div className="flex mb-4">
+                      {[...Array(testimonial.rating)].map((_, i) => (
+                        <Star key={i} className="w-5 h-5 text-amber-400 fill-current" />
+                      ))}
+                    </div>
+                    <p className="text-gray-700 mb-4 italic flex-grow">"{testimonial.comment}"</p>
+                  </CardContent>
+                </Card>
+              </motion.div>
             ))}
           </div>
         </div>
-      </section>
+      </motion.section>
 
       {/* CTA Section */}
-      <section className="py-16 bg-white">
+      <motion.section 
+        ref={ctaRef}
+        initial={{ opacity: 0 }}
+        animate={ctaInView ? { opacity: 1 } : {}}
+        transition={{ duration: 0.8 }}
+        className="py-16 bg-white"
+      >
         <div className="max-w-4xl mx-auto text-center px-4 sm:px-6 lg:px-8">
-          <h2 className="text-3xl sm:text-4xl font-semibold text-gray-900 mb-4">
+          <motion.h2 
+            className="text-3xl sm:text-4xl font-semibold text-gray-900 mb-4"
+            initial={{ opacity: 0, y: 20 }}
+            animate={ctaInView ? { opacity: 1, y: 0 } : {}}
+            transition={{ duration: 0.8, delay: 0.2 }}
+          >
             ¿Listo para comenzar?
-          </h2>
+          </motion.h2>
           <p className="text-xl text-gray-600 mb-8">
             Regístrese para recibir información sobre el lanzamiento de nuestra plataforma
           </p>
@@ -823,7 +956,7 @@ const Landing = () => {
             </Button>
           </div>
         </div>
-      </section>
+      </motion.section>
 
       {/* Footer */}
       <footer className="bg-gray-900 text-white py-12">
@@ -895,6 +1028,7 @@ const Landing = () => {
               <button 
                 onClick={() => setShowPreRegModal(false)}
                 className="absolute top-4 right-4 text-blue-100 hover:text-white transition-colors"
+                aria-label="Cerrar modal"
               >
                 <X className="w-6 h-6" />
               </button>
@@ -925,6 +1059,7 @@ const Landing = () => {
                 <div className="space-y-4">
                   <button
                     onClick={() => setPreRegForm({...preRegForm, userType: 'cliente'})}
+                    aria-label="Seleccionar tipo de usuario Cliente"
                     className={`w-full p-6 rounded-lg border-2 transition-all duration-200 text-left shadow-lg hover:shadow-xl transform hover:-translate-y-1 ${
                       preRegForm.userType === 'cliente' 
                         ? 'border-blue-600 bg-gradient-to-br from-blue-50 to-blue-100' 
@@ -948,6 +1083,7 @@ const Landing = () => {
 
                   <button
                     onClick={() => setPreRegForm({...preRegForm, userType: 'ferreteria'})}
+                    aria-label="Seleccionar tipo de usuario Ferretería/Proveedor"
                     className={`w-full p-6 rounded-lg border-2 transition-all duration-200 text-left shadow-lg hover:shadow-xl transform hover:-translate-y-1 ${
                       preRegForm.userType === 'ferreteria' 
                         ? 'border-orange-600 bg-gradient-to-br from-orange-50 to-yellow-100' 
@@ -1037,6 +1173,7 @@ const Landing = () => {
                       </label>
                       <select
                         required
+                        title="Profesión/Oficio"
                         value={preRegForm.profesion}
                         onChange={(e) => setPreRegForm({...preRegForm, profesion: e.target.value})}
                         className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all bg-gradient-to-r from-white to-gray-50 shadow-sm"
@@ -1081,6 +1218,7 @@ const Landing = () => {
                       </label>
                       <select
                         required
+                        title="Ciudad"
                         value={preRegForm.ciudad}
                         onChange={(e) => setPreRegForm({...preRegForm, ciudad: e.target.value})}
                         className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all bg-gradient-to-r from-white to-gray-50 shadow-sm"
@@ -1155,7 +1293,7 @@ const Landing = () => {
           </div>
         </div>
       )}
-    </div>
+    </motion.div>
   );
 };
 

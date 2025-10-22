@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Eye, EyeOff, Mail, Lock, User, Phone, MapPin } from 'lucide-react';
+import { Eye, EyeOff, Mail, Lock, User, Phone, MapPin, Wrench, DollarSign, Truck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -14,8 +14,8 @@ import {
 } from 'firebase/auth';
 import { FaGoogle, FaFacebookF } from 'react-icons/fa';
 
-import { ADMIN_EMAIL } from "@/pages/admin/config/adminConfig";
-
+// Constantes
+const ADMIN_EMAIL = 'admin@ferry77.com';
 
 const Auth = () => {
   const navigate = useNavigate();
@@ -495,11 +495,19 @@ const Auth = () => {
       <div className="max-w-md w-full">
         {/* Logo */}
         <div className="text-center mb-8">
-          <div className="w-20 h-20 bg-gradient-to-r from-blue-500 to-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
-            <span className="text-white font-bold text-3xl">F</span>
+          <div className="w-32 h-32 mx-auto mb-6">
+            <img 
+              src="/ferrycirculo.png" 
+              alt="Ferry Logo"
+              className="w-full h-full object-contain drop-shadow-xl"
+            />
           </div>
-          <h1 className="text-3xl font-bold text-gray-900">Ferry</h1>
-          <p className="text-gray-600">Plataforma de Herramientas Profesionales</p>
+          <h1 className="text-4xl font-bold text-gray-900 mb-2">
+            Ferry
+          </h1>
+          <p className="text-gray-600 text-lg">
+            Plataforma de Herramientas Profesionales
+          </p>
         </div>
 
         {/* Auth Form */}
@@ -567,20 +575,22 @@ const Auth = () => {
                       type="tel"
                       required
                       className="pl-10 text-gray-900"
-                      placeholder="+54 11 1234-5678"
+                      placeholder="+57 300 123-4567"
                       value={formData.phone}
                       onChange={(e) => setFormData({...formData, phone: e.target.value})}
                     />
                   </div>
                 </div>
                 <div>
-                <Label htmlFor="location">Ubicación</Label>
+                <Label htmlFor="location-user">Ubicación</Label>
                 <select
-                  id="location"
+                  id="location-user"
                   required
                   className="w-full border border-gray-300 rounded-lg p-3 text-gray-900"
                   value={formData.location}
                   onChange={(e) => setFormData({ ...formData, location: e.target.value })}
+                  title="Selecciona tu ciudad"
+                  aria-label="Selecciona tu ciudad"
                 >
                   <option value="">Selecciona tu ciudad</option>
                   {ciudadesColombia.map((ciudad) => (
@@ -628,6 +638,8 @@ const Auth = () => {
                     className="w-full border border-gray-300 rounded-lg p-3 text-gray-900"
                     value={formData.category}
                     onChange={(e) => setFormData({...formData, category: e.target.value})}
+                    title="Selecciona la categoría de la empresa"
+                    aria-label="Categoría de la empresa"
                   >
                     <option value="">Selecciona una categoría</option>
                     <option value="Construcción">Construcción</option>
@@ -664,13 +676,15 @@ const Auth = () => {
                   />
                 </div>
                 <div>
-                <Label htmlFor="location">Ubicación</Label>
+                <Label htmlFor="location-company">Ubicación</Label>
                 <select
-                  id="location"
+                  id="location-company"
                   required
                   className="w-full border border-gray-300 rounded-lg p-3 text-gray-900"
                   value={formData.location}
                   onChange={(e) => setFormData({ ...formData, location: e.target.value })}
+                  title="Selecciona la ciudad de la empresa"
+                  aria-label="Selecciona la ciudad de la empresa"
                 >
                   <option value="">Selecciona tu ciudad</option>
                   {ciudadesColombia.map((ciudad) => (
@@ -953,11 +967,8 @@ const Auth = () => {
                   {error && <div className="text-red-500 mb-4 text-sm">{error}</div>}
                   <div className="flex gap-2">
                     <Button
-                      onClick={() => {
-                        setShowForgotPassword(false);
-                        setError(null);
-                      }}
-                      variant="outline"
+                      onClick={() => setShowForgotPassword(false)}
+                      variant="outline" 
                       className="flex-1"
                       disabled={isLoading}
                     >
@@ -991,23 +1002,23 @@ const Auth = () => {
 
         {/* Features */}
         <div className="mt-8 grid grid-cols-3 gap-4 text-center">
-          <div className="text-white">
-            <div className="bg-white/20 rounded-lg p-3 mb-2 backdrop-blur-sm">
-              <span className="text-2xl">🔧</span>
+          <div>
+            <div className="bg-blue-100 rounded-lg p-4 mb-2 hover:bg-blue-200 transition-all">
+              <Wrench className="w-6 h-6 text-blue-600 mx-auto" />
             </div>
-            <p className="text-sm">Herramientas Profesionales</p>
+            <p className="text-sm font-medium text-blue-900">Herramientas Profesionales</p>
           </div>
-          <div className="text-white">
-            <div className="bg-white/20 rounded-lg p-3 mb-2 backdrop-blur-sm">
-              <span className="text-2xl">💰</span>
+          <div>
+            <div className="bg-blue-100 rounded-lg p-4 mb-2 hover:bg-blue-200 transition-all">
+              <DollarSign className="w-6 h-6 text-blue-600 mx-auto" />
             </div>
-            <p className="text-sm">Mejores Precios</p>
+            <p className="text-sm font-medium text-blue-900">Mejores Precios</p>
           </div>
-          <div className="text-white">
-            <div className="bg-white/20 rounded-lg p-3 mb-2 backdrop-blur-sm">
-              <span className="text-2xl">🚚</span>
+          <div>
+            <div className="bg-blue-100 rounded-lg p-4 mb-2 hover:bg-blue-200 transition-all">
+              <Truck className="w-6 h-6 text-blue-600 mx-auto" />
             </div>
-            <p className="text-sm">Entrega Rápida</p>
+            <p className="text-sm font-medium text-blue-900">Entrega Rápida</p>
           </div>
         </div>
       </div>

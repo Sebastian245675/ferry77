@@ -36,6 +36,7 @@ const FormularioSupremo = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [importError, setImportError] = useState('');
   const [importSuccess, setImportSuccess] = useState(false);
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
   const [showImportModal, setShowImportModal] = useState(false);
   const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
@@ -403,27 +404,36 @@ const FormularioSupremo = () => {
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100">
       {/* Header */}
-      <div className="bg-white shadow-md border-b sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 py-5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <Link to="/" className="p-2.5 hover:bg-blue-50 rounded-full transition-colors duration-200 text-blue-600">
-                <ArrowLeft size={22} className="text-blue-600" />
-              </Link>
-              <div>
-                <h1 className="text-2xl font-extrabold text-gray-900 flex items-center">
-                  Formulario Supremo
-                  <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-800 text-xs font-semibold rounded-full">PRO</span>
-                </h1>
-                <p className="text-sm text-gray-600 mt-0.5">Sistema avanzado de gestión de inventario</p>
+      <div className="bg-gradient-to-b from-white to-gray-50 border-b sticky top-0 z-10">
+        <div className="max-w-7xl mx-auto">
+          <div className="px-4 py-6">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-6">
+                <Link 
+                  to="/" 
+                  className="p-2.5 bg-white shadow-sm hover:shadow-md rounded-xl transition-all duration-200 text-blue-600 border border-gray-100"
+                >
+                  <ArrowLeft size={22} />
+                </Link>
+                <div>
+                  <div className="flex items-center">
+                    <h1 className="text-3xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">
+                      Formulario Supremo
+                    </h1>
+                    <div className="ml-3 px-3 py-1 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-xs font-bold rounded-full shadow-md">
+                      PRO
+                    </div>
+                  </div>
+                  <p className="text-base text-gray-600 mt-1">Sistema avanzado de gestión de inventario</p>
+                </div>
               </div>
-            </div>
-            <div className="hidden sm:flex items-center space-x-2">
-              <div className="bg-blue-50 text-blue-800 py-1.5 px-3 rounded-full text-sm font-medium flex items-center">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
-                Gestión Avanzada
+              <div className="hidden sm:flex items-center space-x-3">
+                <div className="bg-gradient-to-r from-purple-50 to-blue-50 text-blue-800 py-2 px-4 rounded-xl text-sm font-medium flex items-center border border-blue-100 shadow-sm">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                  Gestión Avanzada
+                </div>
               </div>
             </div>
           </div>
@@ -431,11 +441,16 @@ const FormularioSupremo = () => {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 py-8">
-        {/* Mensaje de éxito */}
+        {/* Mensajes de estado */}
         {submitSuccess && (
-          <div className="mb-6 p-4 bg-green-50 border border-green-100 rounded-lg flex items-center space-x-2">
-            <CheckCircle className="text-green-500" size={20} />
-            <p className="text-green-700">¡Artículos guardados con éxito!</p>
+          <div className="mb-6 p-4 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-100 rounded-xl flex items-center space-x-3 shadow-sm">
+            <div className="p-2 bg-green-100 rounded-lg">
+              <CheckCircle className="text-green-600" size={20} />
+            </div>
+            <div>
+              <p className="font-medium text-green-900">¡Éxito!</p>
+              <p className="text-sm text-green-700">Los artículos se han guardado correctamente</p>
+            </div>
           </div>
         )}
 
@@ -465,57 +480,81 @@ const FormularioSupremo = () => {
 
         {/* Panel de estadísticas */}
         <div className="mb-8 grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-5 shadow-lg shadow-blue-100">
-            <div className="flex items-center justify-between">
-              <div className="text-white">
-                <p className="text-sm font-medium opacity-80">Total Artículos</p>
-                <h3 className="text-2xl font-bold mt-1">{items.length}</h3>
-                <p className="text-xs font-medium mt-2 opacity-75">
-                  {searchTerm ? `${filteredItems.length} mostrados` : 'Inventario completo'}
-                </p>
+          <div className="bg-white rounded-xl overflow-hidden border border-gray-100">
+            <div className="px-6 py-5">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center space-x-3">
+                  <div className="p-2.5 bg-blue-50 rounded-lg">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                    </svg>
+                  </div>
+                  <h3 className="font-semibold text-gray-900">Total Artículos</h3>
+                </div>
+                <span className="px-2.5 py-1 text-xs font-medium bg-blue-50 text-blue-600 rounded-full">
+                  Activos
+                </span>
               </div>
-              <div className="bg-blue-400 bg-opacity-30 p-3 rounded-lg">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                </svg>
+              <div className="flex items-baseline space-x-3">
+                <h2 className="text-3xl font-bold text-gray-900">
+                  {items.length}
+                </h2>
+                <span className="text-sm text-gray-500">
+                  {searchTerm ? `${filteredItems.length} mostrados` : 'productos'}
+                </span>
               </div>
             </div>
+            <div className="h-1 w-full bg-gradient-to-r from-blue-500 to-blue-600"></div>
           </div>
-          <div className="bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl p-5 shadow-lg shadow-amber-100">
-            <div className="flex items-center justify-between">
-              <div className="text-white">
-                <p className="text-sm font-medium opacity-80">Categorías</p>
-                <h3 className="text-2xl font-bold mt-1">
+
+          <div className="bg-white rounded-xl overflow-hidden border border-gray-100">
+            <div className="px-6 py-5">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center space-x-3">
+                  <div className="p-2.5 bg-amber-50 rounded-lg">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+                    </svg>
+                  </div>
+                  <h3 className="font-semibold text-gray-900">Categorías</h3>
+                </div>
+                <span className="px-2.5 py-1 text-xs font-medium bg-amber-50 text-amber-600 rounded-full">
+                  Clasificación
+                </span>
+              </div>
+              <div className="flex items-baseline space-x-3">
+                <h2 className="text-3xl font-bold text-gray-900">
                   {Array.from(new Set(items.map(item => item.category))).filter(Boolean).length}
-                </h3>
-                <p className="text-xs font-medium mt-2 opacity-75">
-                  Clasificación de productos
-                </p>
-              </div>
-              <div className="bg-amber-400 bg-opacity-30 p-3 rounded-lg">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
-                </svg>
+                </h2>
+                <span className="text-sm text-gray-500">tipos de productos</span>
               </div>
             </div>
+            <div className="h-1 w-full bg-gradient-to-r from-amber-500 to-amber-600"></div>
           </div>
-          <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-5 shadow-lg shadow-emerald-100">
-            <div className="flex items-center justify-between">
-              <div className="text-white">
-                <p className="text-sm font-medium opacity-80">Marcas</p>
-                <h3 className="text-2xl font-bold mt-1">
-                  {Array.from(new Set(items.map(item => item.brand))).filter(Boolean).length}
-                </h3>
-                <p className="text-xs font-medium mt-2 opacity-75">
-                  Fabricantes registrados
-                </p>
+
+          <div className="bg-white rounded-xl overflow-hidden border border-gray-100">
+            <div className="px-6 py-5">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center space-x-3">
+                  <div className="p-2.5 bg-emerald-50 rounded-lg">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    </svg>
+                  </div>
+                  <h3 className="font-semibold text-gray-900">Marcas</h3>
+                </div>
+                <span className="px-2.5 py-1 text-xs font-medium bg-emerald-50 text-emerald-600 rounded-full">
+                  Fabricantes
+                </span>
               </div>
-              <div className="bg-emerald-400 bg-opacity-30 p-3 rounded-lg">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                </svg>
+              <div className="flex items-baseline space-x-3">
+                <h2 className="text-3xl font-bold text-gray-900">
+                  {Array.from(new Set(items.map(item => item.brand))).filter(Boolean).length}
+                </h2>
+                <span className="text-sm text-gray-500">fabricantes registrados</span>
               </div>
             </div>
+            <div className="h-1 w-full bg-gradient-to-r from-emerald-500 to-emerald-600"></div>
           </div>
         </div>
 
@@ -708,15 +747,39 @@ const FormularioSupremo = () => {
           </Card>
         )}
 
-        {/* Lista de items */}
+          {/* Lista de items */}
         <div>
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-semibold">
-              Artículos{searchTerm ? ' Encontrados' : ' Agregados'} ({filteredItems.length}
-              {searchTerm && items.length !== filteredItems.length ? ` de ${items.length}` : ''})
-            </h2>
-            
-            {searchTerm && (
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+              <h2 className="text-xl font-semibold">
+                Artículos{searchTerm ? ' Encontrados' : ' Agregados'} ({filteredItems.length}
+                {searchTerm && items.length !== filteredItems.length ? ` de ${items.length}` : ''})
+              </h2>
+              <div className="flex items-center bg-gray-100 rounded-lg p-1 shadow-sm">
+                <Button
+                  variant={viewMode === 'grid' ? 'default' : 'ghost'}
+                  size="sm"
+                  onClick={() => setViewMode('grid')}
+                  className={`flex items-center gap-2 px-3 py-2 ${viewMode === 'grid' ? 'bg-white shadow-sm' : 'hover:bg-gray-200'}`}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                  </svg>
+                  <span className="text-sm font-medium">Cuadrícula</span>
+                </Button>
+                <Button
+                  variant={viewMode === 'list' ? 'default' : 'ghost'}
+                  size="sm"
+                  onClick={() => setViewMode('list')}
+                  className={`flex items-center gap-2 px-3 py-2 ${viewMode === 'list' ? 'bg-white shadow-sm' : 'hover:bg-gray-200'}`}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
+                  <span className="text-sm font-medium">Lista</span>
+                </Button>
+              </div>
+            </div>            {searchTerm && (
               <p className="text-sm text-gray-500">
                 Mostrando resultados para: <span className="font-medium">{searchTerm}</span>
               </p>
@@ -737,10 +800,94 @@ const FormularioSupremo = () => {
               <h3 className="mt-2 text-lg font-medium text-gray-700">No se encontraron resultados</h3>
               <p className="mt-1 text-gray-500">No hay artículos que coincidan con tu búsqueda</p>
             </div>
+          ) : viewMode === 'grid' ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {filteredItems.map((item) => (
+                <Card key={item.id} className="overflow-hidden hover:shadow-lg transition-shadow duration-300 group">
+                  <div className="relative">
+                    {item.imageUrl ? (
+                      <div className="w-full h-48 bg-gray-100 overflow-hidden">
+                        <img 
+                          src={item.imageUrl} 
+                          alt={item.name} 
+                          className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300"
+                          onError={(e) => {
+                            const target = e.target as HTMLImageElement;
+                            target.onerror = null;
+                            target.src = "https://via.placeholder.com/400x300?text=Producto";
+                          }}
+                        />
+                      </div>
+                    ) : (
+                      <div className="w-full h-48 bg-gray-50 flex items-center justify-center">
+                        <ImageIcon size={48} className="text-gray-300" />
+                      </div>
+                    )}
+                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                      <div className="flex gap-2 bg-white rounded-lg shadow-lg p-1">
+                        <Button 
+                          variant="ghost" 
+                          size="icon"
+                          className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                          onClick={() => handleEditItem(item)}
+                        >
+                          <Pencil size={16} />
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="icon"
+                          className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50"
+                          onClick={() => removeItem(item.id)}
+                        >
+                          <Trash2 size={16} />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="p-5">
+                    <div className="mb-4">
+                      <h3 className="text-lg font-semibold text-gray-900 mb-1 truncate">{item.name}</h3>
+                      {item.category && (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">
+                          {item.category}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="space-y-3">
+                      {item.brand && (
+                        <div className="flex items-center">
+                          <span className="text-sm font-medium text-gray-500 w-24">Marca</span>
+                          <span className="text-sm text-gray-900">{item.brand}</span>
+                        </div>
+                      )}
+                      
+                      {item.price && (
+                        <div className="flex items-center justify-between py-2 border-t border-gray-100">
+                          <span className="text-sm font-medium text-gray-500">Precio</span>
+                          <span className="text-lg font-bold text-gray-900">
+                            ${parseFloat(item.price).toLocaleString('es-CO')}
+                          </span>
+                        </div>
+                      )}
+                      
+                      {item.specifications && (
+                        <div className="pt-3 border-t border-gray-100">
+                          <p className="text-sm text-gray-600 line-clamp-2" title={item.specifications}>
+                            {item.specifications}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </Card>
+              ))}
+            </div>
           ) : (
             <div className="space-y-4">
               {filteredItems.map((item) => (
-                <Card key={item.id} className="p-4 border border-gray-200">
+                <Card key={item.id} className="p-4 border border-gray-200 hover:shadow-md transition-shadow duration-300">
                   <div className="flex flex-col md:flex-row gap-4">
                     {item.imageUrl ? (
                       <div className="w-24 h-24 bg-gray-100 rounded-lg overflow-hidden">
@@ -751,23 +898,30 @@ const FormularioSupremo = () => {
                           onError={(e) => {
                             const target = e.target as HTMLImageElement;
                             target.onerror = null;
-                            target.src = "https://via.placeholder.com/150?text=Error+de+imagen";
+                            target.src = "https://via.placeholder.com/150?text=Producto";
                           }}
                         />
                       </div>
                     ) : (
-                      <div className="w-24 h-24 bg-gray-100 rounded-lg flex items-center justify-center">
-                        <ImageIcon size={32} className="text-gray-400" />
+                      <div className="w-24 h-24 bg-gray-50 rounded-lg flex items-center justify-center">
+                        <ImageIcon size={32} className="text-gray-300" />
                       </div>
                     )}
                     <div className="flex-1">
-                      <div className="flex justify-between">
-                        <h3 className="font-medium text-lg">{item.name}</h3>
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <h3 className="font-semibold text-lg text-gray-900">{item.name}</h3>
+                          {item.category && (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 mt-1">
+                              {item.category}
+                            </span>
+                          )}
+                        </div>
                         <div className="flex gap-2">
                           <Button 
                             variant="ghost" 
                             size="icon" 
-                            className="text-blue-500 hover:bg-blue-50"
+                            className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
                             onClick={() => handleEditItem(item)}
                           >
                             <Pencil size={18} />
@@ -775,37 +929,36 @@ const FormularioSupremo = () => {
                           <Button 
                             variant="ghost" 
                             size="icon" 
-                            className="text-red-500 hover:bg-red-50"
+                            className="text-red-600 hover:text-red-700 hover:bg-red-50"
                             onClick={() => removeItem(item.id)}
                           >
                             <Trash2 size={18} />
                           </Button>
                         </div>
                       </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 mt-2 gap-y-2 gap-x-4">
+                      
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-4 mt-2">
                         {item.brand && (
-                          <div>
-                            <span className="text-sm text-gray-500">Marca:</span>
-                            <span className="ml-1 text-sm">{item.brand}</span>
-                          </div>
-                        )}
-                        {item.category && (
-                          <div>
-                            <span className="text-sm text-gray-500">Categoría:</span>
-                            <span className="ml-1 text-sm">{item.category}</span>
+                          <div className="flex items-center">
+                            <span className="text-sm font-medium text-gray-500 w-24">Marca:</span>
+                            <span className="text-sm text-gray-900">{item.brand}</span>
                           </div>
                         )}
                         {item.price && (
-                          <div>
-                            <span className="text-sm text-gray-500">Precio:</span>
-                            <span className="ml-1 text-sm font-medium">${parseFloat(item.price).toFixed(2)}</span>
+                          <div className="flex items-center">
+                            <span className="text-sm font-medium text-gray-500 w-24">Precio:</span>
+                            <span className="text-sm font-bold text-gray-900">
+                              ${parseFloat(item.price).toLocaleString('es-CO')}
+                            </span>
                           </div>
                         )}
                       </div>
+                      
                       {item.specifications && (
                         <div className="mt-2">
-                          <span className="text-sm text-gray-500">Especificaciones:</span>
-                          <p className="text-sm mt-1">{item.specifications}</p>
+                          <p className="text-sm text-gray-600 line-clamp-2" title={item.specifications}>
+                            {item.specifications}
+                          </p>
                         </div>
                       )}
                     </div>

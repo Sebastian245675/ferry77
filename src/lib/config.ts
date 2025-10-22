@@ -1,5 +1,4 @@
 // Configuración centralizada de la aplicación
-
 export const API_CONFIG = {
   BASE_URL: import.meta.env.VITE_API_URL || 'http://localhost:8090',
   WEBSOCKET_URL: import.meta.env.VITE_WS_URL || 'ws://localhost:8090/ws/websocket',

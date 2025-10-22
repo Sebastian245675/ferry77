@@ -1,0 +1,15 @@
+.quote-progress-bar {
+  width: 100%;
+}
+
+.transport-item-1 {
+  animation-delay: 0.3s;
+}
+
+.transport-item-2 {
+  animation-delay: 0.6s;
+}
+
+.transport-item-3 {
+  animation-delay: 0.9s;
+}
